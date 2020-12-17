@@ -101,7 +101,8 @@ class Trainer:
                val_crop='five', batch_size=128, model_name='tf_efficientnet_b3_ns', 
                lr=0.001, lr_min=0.0001, weight_decay=1e-4, momentum=0.9, log_step=25, save_step=10,
                log_path='./drive/My Drive/cars_log.txt', cutout=False, style_aug=False,
-               resume=False, resume_path='./drive/My Drive/ckpt/', train_csv='./train_labels.csv', val_csv='./val_labels.csv'):
+               resume=False, resume_path='./drive/My Drive/ckpt/', train_csv='./train_labels.csv', 
+               val_csv='./val_labels.csv', save_dir='../drive/MyDrive/ckpt/grapheme/'):
 
         # initialize attributes
         self.epoch = epoch
@@ -123,6 +124,7 @@ class Trainer:
         self.resume_path = resume_path
         self.train_csv = train_csv
         self.val_csv = val_csv
+        self.save_dir = save_dir
         if model_name == 'tf_efficientnet_b0_ns':
             self.input_size = (224, 224)
         elif model_name == 'tf_efficientnet_b3_ns':
@@ -362,7 +364,7 @@ class Trainer:
                     'optimizer_consonant_state_dict': self.optimizer_consonant.state_dict(),
                     'optimizer_vowel_state_dict': self.optimizer_vowel.state_dict(),
                     'epoch': epoch + 1
-                }, './drive/MyDrive/ckpt/grapheme/%d.pth'%(epoch+1))
+                }, os.path.join(self.save_dir, '%d.pth'%(epoch+1)))
         
 
     def criterion(self, preds, trues):
