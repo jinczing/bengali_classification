@@ -28,7 +28,7 @@ class BengaliDataset(Dataset):
       self.cache_images()
 
   def cache_images(self):
-    pbar = tqdm.tqdm(range(self.label.shape[0]))
+    pbar = tqdm.tqdm(range(self.label.shape[0]), position=0, leave=True)
     pbar.set_description('caching images...')
     for i in pbar:
       self.img[i] = self.load_image(i)
