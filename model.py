@@ -23,7 +23,38 @@ from timm.models import create_model
     root2 = Lambda(lambda x: K.softmax(x), name='root2')(x1)
 '''
 
-class MyModel(nn.Module):
+class Model(nn.Module):
+  def __init__(self, input_size, backbone, classes_number, pretrained=True, dropout=0.2):
+    self.input_size = input_size
+    self.backbone = backbone
+    self.classes_number = classes_number
+    self.pretrained = pretrained
+    self.dropout=dropout
+
+    self.backbone = create_model(self.backbone, self.pretrained, num_classes=0)
+
+    intermid = []
+    feature_size = self.bachbone.state_dict()['bn2.weight'].shape[0]
+    intermid.append(nn.BatchNorm(feature_size))
+    intermid.append(nn.Dropout(self.dropout))
+    intermid.append(nn.Linear(feature_size, 512))
+    intermid.append(nn.BatchNorm(512))
+
+    self.intermid = nn.ModuleList(intermid)
+    self.arc_face = ArcMarginProduct(512, self.classes_number)
+    self.head = nn.Linear(512, self.classes_number)
+
+  def forward(self, input, label):
+    input = self.backbone(input)
+
+    x = intermid(input)
+    x = F.normalize(x, p=2, dim=1)
+    output = self.arc_face(x, label)
+    output2 = self.head(x)
+
+    return output, output2
+
+class MultiHeadModel(nn.Module):
   def __init__(self, input_size, backbone, pretrained=True, dropout=0.2):
     self.input_size = input_size
     self.backbone = backbone
@@ -47,41 +78,43 @@ class MyModel(nn.Module):
     self.arc_face_root = ArcMarginProduct(512, 168)
     self.arc_face_consonant = ArcMarginProduct(512, 11)
     self.arc_face_vowel = ArcMarginProduct(512, 18)
-    self.arc_face_unique = ArcMarginProduct(512, 1292)
+    self.arc_face_unique = ArcMarginProduct(512, 1295)
 
     self.head_root = nn.Linear(512, 168)
     self.head_consonant = nn.Linear(512, 11)
     self.head_vowel = nn.Linear(512, 18)
-    self.head_unique = nn.Linear(512, 1292)
+    self.head_unique = nn.Linear(512, 1295)
 
-  def multi_head(self, input, label):
+  def multi_head(self, input, root, consonant, vowel, unique):
     input = self.backbone(input)
 
     x1 = intermid_root(input)
     x1 = F.normalize(x1, p=2, dim=1)
-    root = self.arc_face_root(x1, label)
+    root = self.arc_face_root(x1, root)
     root2 = self.head_root(x1)
 
     x2 = intermid_consonant(input)
     x2 = F.normalize(x2, p=2, dim=1)
-    consonant = self.arc_face_consonant(x2, label)
+    consonant = self.arc_face_consonant(x2, consonant)
     consonant2 = self.head_consonant(x2)
 
     x3 = intermid_vowel(input)
     x3 = F.normalize(x3, p=2, dim=1)
-    vowel = self.arc_face_vowel(x3, label)
+    vowel = self.arc_face_vowel(x3, vowel)
     vowel2 = self.head_vowel(x3)
 
     x4 = intermid_unique(input)
     x4 = F.normalize(x4, p=2, dim=1)
-    unique = self.arc_face_unique(x4, label)
+    unique = self.arc_face_unique(x4, unique)
     unique2 = self.head_unique(x4)
 
     return root, consonant, vowel, unique, roo2, consonant2, vowel2, unique2
 
 
+  def forward(self, input, root, consonant, vowel, unique):
+    multi_head_outputs = self.multi_head(input, root, consonant, vowel, unique)
 
-  def forward(self, input, label):
+    return multi_head_outputs
 
 
 class ArcMarginProduct(nn.Module):
@@ -127,34 +160,3 @@ class ArcMarginProduct(nn.Module):
         # print(output)
 
         return output
-
-class FocalLoss(nn.Module):
-    def __init__(self, gamma=2, alpha=0.25, size_average=False):
-        super(FocalLoss, self).__init__()
-        self.gamma = gamma
-        self.alpha = alpha
-        if isinstance(alpha,(float,int)): self.alpha = torch.Tensor([alpha,1-alpha])
-        if isinstance(alpha,list): self.alpha = torch.Tensor(alpha)
-        self.size_average = size_average
-
-    def forward(self, input, target):
-        if input.dim()>2:
-            input = input.view(input.size(0),input.size(1),-1)  # N,C,H,W => N,C,H*W
-            input = input.transpose(1,2)    # N,C,H*W => N,H*W,C
-            input = input.contiguous().view(-1,input.size(2))   # N,H*W,C => N*H*W,C
-        target = target.view(-1,1)
-
-        logpt = F.log_softmax(input)
-        logpt = logpt.gather(1,target)
-        logpt = logpt.view(-1)
-        pt = Variable(logpt.data.exp())
-
-        if self.alpha is not None:
-            if self.alpha.type()!=input.data.type():
-                self.alpha = self.alpha.type_as(input.data)
-            at = self.alpha.gather(0,target.data.view(-1))
-            logpt = logpt * Variable(at)
-
-        loss = -1 * (1-pt)**self.gamma * logpt
-        if self.size_average: return loss.mean()
-        else: return loss.sum()
