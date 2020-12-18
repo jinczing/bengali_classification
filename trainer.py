@@ -12,6 +12,7 @@ from torchvision.datasets import ImageFolder
 from torchvision.transforms import transforms
 from PIL import Image
 
+
 class BengaliDataset(Dataset):
   def __init__(self, label_csv, train_folder, transforms, cache=True):
     self.label_csv = label_csv
@@ -24,8 +25,8 @@ class BengaliDataset(Dataset):
     self.transforms = transforms
     self.img = [None] * self.label.shape[0]
 
-    if cache:
-      self.cache_images()
+    # if cache:
+    #   self.cache_images()
 
   def cache_images(self):
     pbar = tqdm.tqdm(range(self.label.shape[0]), position=0, leave=True)
@@ -99,7 +100,7 @@ class Trainer:
                dataset_path='./drive/MyDrive/datasets/car classification/train_data', 
                val_path='./drive/MyDrive/datasets/car classification/val_data', 
                val_crop='five', batch_size=128, model_name='tf_efficientnet_b3_ns', 
-               lr=0.001, lr_min=0.0001, weight_decay=1e-4, momentum=0.9, log_step=25, save_step=10,
+               lr=0.001, lr_min=0.0001, weight_decay=1e-4, momentum=0.9, scheduler='plateau',log_step=25, save_step=10,
                log_path='./drive/My Drive/cars_log.txt', cutout=False, style_aug=False,
                resume=False, resume_path='./drive/My Drive/ckpt/', train_csv='./train_labels.csv', 
                val_csv='./val_labels.csv', save_dir='../drive/MyDrive/ckpt/grapheme/'):
@@ -115,6 +116,7 @@ class Trainer:
         self.lr_mi = lr_min
         self.weight_decay = weight_decay
         self.momentum = momentum
+        self.scheduler = scheduler
         self.log_step = log_step
         self.save_step = save_step
         self.log_path = log_path
@@ -166,19 +168,26 @@ class Trainer:
             self.model_root.load_state_dict(ckpt['model_root_state_dict'])
             self.model_consonant.load_state_dict(ckpt['model_consonant_state_dict'])
             self.model_vowel.load_state_dict(ckpt['model_vowel_state_dict'])
-            self.optimizer.load_state_dict(ckpt['optimizer_root_state_dict'])
-            self.optimizer.load_state_dict(ckpt['optimizer_consonant_state_dict'])
-            self.optimizer.load_state_dict(ckpt['optimizer_vowel_state_dict'])
+            self.optimizer_root.load_state_dict(ckpt['optimizer_root_state_dict'])
+            self.optimizer_consonant.load_state_dict(ckpt['optimizer_consonant_state_dict'])
+            self.optimizer_vowel.load_state_dict(ckpt['optimizer_vowel_state_dict'])
             self.start_epoch = ckpt['epoch']
-
-        self.scheduler_root = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer_root, T_max=epoch, last_epoch=self.start_epoch-1,
-                  eta_min=lr_min)
-        self.scheduler_consonant = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer_consonant, T_max=epoch, last_epoch=self.start_epoch-1,
-                  eta_min=lr_min)
-        self.scheduler_vowel = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer_vowel, T_max=epoch, last_epoch=self.start_epoch-1,
-                  eta_min=lr_min)
+        if self.scheduler == 'plateau':
+          self.scheduler_root = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_root, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
+          self.scheduler_consonant = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_consonant, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
+          self.scheduler_vowel = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_vowel, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
+        else:
+          self.scheduler_root = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer_root, T_max=epoch, last_epoch=self.start_epoch-1,
+                    eta_min=lr_min)
+          self.scheduler_consonant = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer_consonant, T_max=epoch, last_epoch=self.start_epoch-1,
+                    eta_min=lr_min)
+          self.scheduler_vowel = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer_vowel, T_max=epoch, last_epoch=self.start_epoch-1,
+                    eta_min=lr_min)
 
     def train(self):
+        root_last_loss = 1000
+        consonant_last_loss = 1000
+        vowel_last_loss = 1000
         for epoch in range(self.start_epoch, self.epoch):
             pbar = tqdm.tqdm(self.dataloader)
             pbar.set_description('training process')
@@ -197,9 +206,14 @@ class Trainer:
             self.model_root.train()
             self.model_consonant.train()
             self.model_vowel.train()
-            self.scheduler_root.step()
-            self.scheduler_consonant.step()
-            self.scheduler_vowel.step()
+            if self.scheduler == 'plateau':
+              self.scheduler_root.step(root_last_loss)
+              self.scheduler_consonant.step(consonant_last_loss)
+              self.scheduler_vowel.step(vowel_last_loss)
+            else:
+              self.scheduler_root.step()
+              self.scheduler_consonant.step()
+              self.scheduler_vowel.step()
             batch_number = len(pbar)
             for it, data in enumerate(pbar):
 
