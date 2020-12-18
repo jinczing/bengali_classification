@@ -128,7 +128,7 @@ class Cutout(object):
         return img
 
 
-class Trainer:
+class MultiHeadTrainer:
     def __init__(self, epoch, 
                dataset_path='./drive/MyDrive/datasets/car classification/train_data', 
                val_path='./drive/MyDrive/datasets/car classification/val_data', 
@@ -257,7 +257,7 @@ class Trainer:
 
       paras.extend(*model.backbone.parameters())
 
-      paras.extend(*model.intermid_root[0].parameters() + *model.intermid_root[-1].parameters())
+      paras.extend(*(model.intermid_root[0].parameters() + model.intermid_root[-1].parameters()))
       paras.extend(*model.intermid_consonant[0].parameters() + *model.intermid_consonant[-1].parameters())
       paras.extend(*model.intermid_vowel[0].parameters() + *model.intermid_vowel[-1].parameters())
       paras.extend(*model.intermid_unique[0].parameters() + *model.intermid_unique[-1].parameters())
@@ -322,20 +322,26 @@ class Trainer:
                 vowels = data[3].to(self.device).long()
                 uniques = data[4].to(self.device).long()
 
-                root_preds = self.model_root(inputs, roots)
+                root_preds, root_preds_2 = self.model_root(inputs, roots)
                 root_loss = self.criterion(root_preds, roots)
-                root_loss.backward()
+                root_loss_2 = self.criterion(root_preds_2, roots)
+                root_loss = (root_loss + root_loss_2) / 2
+                root_root.backward()
                 self.optimizer_root.step()
                 self.model_root.zero_grad()
 
-                consonant_preds = self.model_consonant(inputs, consonants)
+                consonant_preds, consonant_preds_2 = self.model_consonant(inputs, consonants)
                 consonant_loss = self.criterion(consonant_preds, consonants)
+                consonant_loss_2 = self.criterion(consonant_preds_2, consonants)
+                consonant_loss = (consonant_loss + consonant_loss_2) / 2
                 consonant_loss.backward()
                 self.optimizer_consonant.step()
                 self.model_consonant.zero_grad()
 
-                vowel_preds = self.model_vowel(inputs, vowels)
+                vowel_preds, vow_preds_2 = self.model_vowel(inputs, vowels)
                 vowel_loss = self.criterion(vowel_preds, vowels)
+                vowel_loss_2 = self.criterion(vowel_preds_2, vowels)
+                vowel_loss = (vowel_loss + vowel_loss_2) / 2
                 vowel_loss.backward()
                 self.optimizer_vowel.step()
                 self.model_vowel.zero_grad()
@@ -367,14 +373,26 @@ class Trainer:
                 root_acc = (root_preds.argmax(-1) == roots).sum().item() / roots.size()[0]
                 consonant_acc = (consonant_preds.argmax(-1) == consonants).sum().item() / consonants.size()[0]
                 vowel_acc = (vowel_preds.argmax(-1) == vowels).sum().item() / vowels.size()[0]
-                multihead_root_acc = (roo)
+                multihead_root_acc = (root.argmax(-1) == roots).sum().item() / roots.size()[0]
+                multihead_consonant_acc = (consonant.argmax(-1) == consonants).sum().item() / consonants.size()[0]
+                multihead_vowel_acc = (vowel.argmax(-1) == vowels).sum().item() / vowels.size()[0]
+                multihead_unique_acc = (unique.argmax(-1) == uniques).sum().item() / uniques.size()[0]
 
                 root_acc_mean += root_acc 
                 consonant_acc_mean += consonant_acc 
                 vowel_acc_mean += vowel_acc
+                multihead_root_acc_mean += multihead_root_acc
+                multihead_consonant_acc_mean += multihead_consonant_acc
+                multihead_vowel_acc_mean += multihead_vowel_acc
+                multihead_unique_acc_mean += multihead_unique_acc
+
                 root_epoch_acc_mean += root_acc 
                 consonant_epoch_acc_mean += consonant_acc 
                 vowel_epoch_acc_mean += vowel_acc
+                multihead_root_epoch_acc_mean += multihead_root_acc
+                multihead_consonant_epoch_acc_mean += multihead_consonant_acc
+                multihead_vowel_epoch_acc_mean += multihead_vowel_acc
+                multihead_unique_epoch_acc_mean += multihead_unique_acc
 
                 if (it+1) % self.log_step == 0:
                     root_loss_mean /= self.log_step
@@ -383,39 +401,64 @@ class Trainer:
                     root_acc_mean /= self.log_step
                     consonant_acc_mean /= self.log_step
                     vowel_acc_mean /= self.log_step
+                    multihead_root_acc_mean /= self.log_step
+                    multihead_consonant_acc_mean /= self.log_step
+                    multihead_vowel_acc_mean /= self.log_step
+                    multihead_unique_acc_mean /= self.log_step
                     with open(self.log_path, 'a+') as f:
                         f.write('epoch: ' + str(epoch) + '\n')
                         f.write('root loss: ' + str(root_loss_mean) + '\n')
                         f.write('consonant loss: ' + str(consonant_loss_mean) + '\n')
                         f.write('vowel loss: ' + str(vowel_loss_mean) + '\n')
+                        f.write('multihead loss: ' + str(multihead_loss_mean) + '\n')
                         f.write('root acc: ' + str(root_acc_mean) + '\n')
                         f.write('cosonant acc: ' + str(consonant_acc_mean) + '\n')
                         f.write('vowel acc: ' + str(vowel_acc_mean) + '\n')
+                        f.write('multihead root acc: ' + str(multihead_root_acc_mean) + '\n')
+                        f.write('multihead consonant acc: ' + str(multihead_consonant_acc_mean) + '\n')
+                        f.write('multihead vowel acc: ' + str(multihead_vowel_acc_mean) + '\n')
+                        f.write('multihead unique acc: ' + str(multihead_unique_acc_mean) + '\n')
                         f.write('\n')
                     root_loss_mean = 0
                     consonant_loss_mean = 0
                     vowel_loss_mean = 0
+                    multihead_loss_mean = 0
                     root_acc_mean = 0
                     consonant_acc_mean = 0
                     vowel_acc_mean = 0
+                    multihead_root_acc_mean = 0
+                    multihead_consonant_acc_mean = 0
+                    multihead_vowel_acc_mean = 0
+                    multihead_unique_acc_mean = 0
             root_epoch_loss_mean /= len(pbar)
             root_epoch_acc_mean /= len(pbar)
             consonant_epoch_loss_mean /= len(pbar)
             consonant_epoch_acc_mean /= len(pbar)
             vowel_epoch_loss_mean /= len(pbar)
             vowel_epoch_acc_mean /= len(pbar)
+            multihead_epoch_loss_mean /= len(pbar)
+            multihead_root_epoch_acc_mean /= len(pbar)
+            multihead_consonant_epoch_acc_mean /= len(pbar)
+            multihead_vowel_epoch_acc_mean /= len(pbar)
+            multihead_unique_epoch_acc_mean /= len(pbar)
             # validate
             pbar = tqdm.tqdm(self.val_dataloader)
             pbar.set_description('validating process')
             root_val_loss_mean = 0
             consonant_val_loss_mean = 0
             vowel_val_loss_mean = 0
+            multihead_val_loss_mean = 0
             root_val_acc_mean = 0
             consonant_val_acc_mean = 0
             vowel_val_acc_mean = 0
+            multihead_val_root_acc_mean = 0
+            multihead_val_consonant_acc_mean = 0
+            multihead_val_vowel_acc_mean = 0
+            multihead_val_unique_acc_mean = 0
             self.model_root.eval()
             self.model_consonant.eval()
             self.model_vowel.eval()
+            self.model_multihead.eval()
             with torch.no_grad():
                 for it, data in enumerate(pbar):
                     inputs = data[0].to(self.device)
@@ -491,4 +534,4 @@ class Trainer:
         
 
     def criterion(self, preds, trues):
-        return torch.nn.CrossEntropyLoss()(preds, trues)
+        return FocalLoss(preds, trues)
