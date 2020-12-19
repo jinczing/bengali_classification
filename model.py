@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import math
 from torch.nn import Parameter
@@ -23,8 +24,9 @@ from timm.models import create_model
     root2 = Lambda(lambda x: K.softmax(x), name='root2')(x1)
 '''
 
-class Model(nn.Module):
+class MyModel(nn.Module):
   def __init__(self, input_size, backbone, classes_number, pretrained=True, dropout=0.2):
+    super(MyModel, self).__init__()
     self.input_size = input_size
     self.backbone = backbone
     self.classes_number = classes_number
@@ -34,20 +36,21 @@ class Model(nn.Module):
     self.backbone = create_model(self.backbone, self.pretrained, num_classes=0)
 
     intermid = []
-    feature_size = self.bachbone.state_dict()['bn2.weight'].shape[0]
-    intermid.append(nn.BatchNorm(feature_size))
+    feature_size = self.backbone.state_dict()['bn2.weight'].shape[0]
+    intermid.append(nn.BatchNorm1d(feature_size))
     intermid.append(nn.Dropout(self.dropout))
     intermid.append(nn.Linear(feature_size, 512))
-    intermid.append(nn.BatchNorm(512))
+    intermid.append(nn.BatchNorm1d(512))
 
     self.intermid = nn.ModuleList(intermid)
     self.arc_face = ArcMarginProduct(512, self.classes_number)
     self.head = nn.Linear(512, self.classes_number)
 
   def forward(self, input, label):
-    input = self.backbone(input)
+    x = self.backbone(input)
 
-    x = intermid(input)
+    for inter in self.intermid:
+      x = inter(x)
     x = F.normalize(x, p=2, dim=1)
     output = self.arc_face(x, label)
     output2 = self.head(x)
@@ -55,7 +58,9 @@ class Model(nn.Module):
     return output, output2
 
 class MultiHeadModel(nn.Module):
+  
   def __init__(self, input_size, backbone, pretrained=True, dropout=0.2):
+    super(MultiHeadModel, self).__init__()
     self.input_size = input_size
     self.backbone = backbone
     self.pretrained = pretrained
@@ -64,11 +69,11 @@ class MultiHeadModel(nn.Module):
     self.backbone = create_model(self.backbone, self.pretrained, num_classes=0)
 
     intermid = []
-    feature_size = self.bachbone.state_dict()['bn2.weight'].shape[0]
-    intermid.append(nn.BatchNorm(feature_size))
+    feature_size = self.backbone.state_dict()['bn2.weight'].shape[0]
+    intermid.append(nn.BatchNorm1d(feature_size))
     intermid.append(nn.Dropout(self.dropout))
     intermid.append(nn.Linear(feature_size, 512))
-    intermid.append(nn.BatchNorm(512))
+    intermid.append(nn.BatchNorm1d(512))
 
     self.intermid_root = nn.ModuleList(intermid)
     self.intermid_consonant = nn.ModuleList(intermid)
@@ -88,27 +93,35 @@ class MultiHeadModel(nn.Module):
   def multi_head(self, input, root, consonant, vowel, unique):
     input = self.backbone(input)
 
-    x1 = intermid_root(input)
+    x1 = self.intermid_root[0](input)
+    for inter in self.intermid_root[1:]:
+      x1 = inter(x1)
     x1 = F.normalize(x1, p=2, dim=1)
     root = self.arc_face_root(x1, root)
     root2 = self.head_root(x1)
-
-    x2 = intermid_consonant(input)
+    
+    x2 = self.intermid_consonant[0](input)
+    for inter in self.intermid_consonant[1:]:
+      x2 = inter(x2)
     x2 = F.normalize(x2, p=2, dim=1)
     consonant = self.arc_face_consonant(x2, consonant)
     consonant2 = self.head_consonant(x2)
 
-    x3 = intermid_vowel(input)
+    x3 = self.intermid_vowel[0](input)
+    for inter in self.intermid_vowel[1:]:
+      x3 = inter(x3)
     x3 = F.normalize(x3, p=2, dim=1)
     vowel = self.arc_face_vowel(x3, vowel)
     vowel2 = self.head_vowel(x3)
 
-    x4 = intermid_unique(input)
+    x4 = self.intermid_unique[0](input)
+    for inter in self.intermid_unique[1:]:
+      x4 = inter(x4)
     x4 = F.normalize(x4, p=2, dim=1)
     unique = self.arc_face_unique(x4, unique)
     unique2 = self.head_unique(x4)
 
-    return root, consonant, vowel, unique, roo2, consonant2, vowel2, unique2
+    return root, consonant, vowel, unique, root2, consonant2, vowel2, unique2
 
 
   def forward(self, input, root, consonant, vowel, unique):

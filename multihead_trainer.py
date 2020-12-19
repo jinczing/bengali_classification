@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import tqdm
 import csv
@@ -11,7 +13,8 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import transforms
 from PIL import Image
-from model import Model, MultiHeadModel
+from model import MyModel, MultiHeadModel
+from torch.autograd import Variable
 
 
 class BengaliDataset(Dataset):
@@ -20,12 +23,12 @@ class BengaliDataset(Dataset):
     self.train_folder = train_folder
     self.label = pd.read_csv(self.label_csv)
     self.label[['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']] = self.label[['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']].astype('uint8')
-    self.uniques = label.grapheme.unique()
+    self.uniques = self.label.grapheme.unique()
     self.transforms = transforms
     self.img = [None] * self.label.shape[0]
 
-    if cache:
-      self.cache_images()
+    # if cache:
+    #   self.cache_images()
 
   def cache_images(self):
     pbar = tqdm.tqdm(range(self.label.shape[0]), position=0, leave=True)
@@ -79,7 +82,8 @@ class FocalLoss(nn.Module):
         if self.alpha is not None:
             if self.alpha.type()!=input.data.type():
                 self.alpha = self.alpha.type_as(input.data)
-            at = self.alpha.gather(0,target.data.view(-1))
+            select = (target!=0).type(torch.LongTensor).cuda()
+            at = self.alpha.gather(0,select.data.view(-1))
             logpt = logpt * Variable(at)
 
         loss = -1 * (1-pt)**self.gamma * logpt
@@ -187,10 +191,10 @@ class MultiHeadTrainer:
         self.dataloader = DataLoader(self.dataset, batch_size=self.batch_size, num_workers=0, shuffle=True)
         self.val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=1, shuffle=True)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model_root = Model(self.input_size, self.model_name, 168, pretrained=True, dropout=0.2)
-        self.model_consonant = Model(self.input_size, self.model_name, 11, pretrained=True, dropout=0.2)
-        self.model_vowel = Model(self.input_size, self.model_name, 18, pretrained=True, dropout=0.2)
-        self.model_multihead = MultiHeadModel(self.input_size, self.model_name, pretrained=True, dropout=0.2)
+        self.model_root = MyModel(self.input_size, self.model_name, 168, pretrained=True, dropout=0.2).to('cuda')
+        self.model_consonant = MyModel(self.input_size, self.model_name, 11, pretrained=True, dropout=0.2).to('cuda')
+        self.model_vowel = MyModel(self.input_size, self.model_name, 18, pretrained=True, dropout=0.2).to('cuda')
+        self.model_multihead = MultiHeadModel(self.input_size, self.model_name, pretrained=True, dropout=0.2).to('cuda')
         # self.optimizer = optim.SGD([
 #                             {'params': paras_wo_bn[:-1], 'weight_decay': 4e-5},
 #                             {'params': [paras_wo_bn[-1]] + [self.head.kernel], 'weight_decay': 4e-4},
@@ -198,23 +202,25 @@ class MultiHeadTrainer:
 #                         ], lr = conf.lr, momentum = conf.momentum)
         self.optimizer_root = torch.optim.SGD([
           {'params': self.gather_wo_decay(self.model_root)},
-          {'params': [self.model_root.intermid[2]] + [self.model_root.arc_face.weight], 'weight_decay': self.weight_decay}
+          {'params': [*self.model_root.intermid[2].parameters()] + [self.model_root.arc_face.weight], 'weight_decay': self.weight_decay}
         ], lr=self.lr, momentum=self.momentum, nesterov=True)
         self.optimizer_consonant = torch.optim.SGD([
           {'params': self.gather_wo_decay(self.model_consonant)},
-          {'params': [self.model_consonant.intermid[2]] + [self.model_consonant.arc_face.weight], 'weight_decay': self.weight_decay}
+          {'params': [*self.model_consonant.intermid[2].parameters()] + [self.model_consonant.arc_face.weight], 'weight_decay': self.weight_decay}
         ], lr=self.lr, momentum=self.momentum, nesterov=True)
         self.optimizer_vowel = torch.optim.SGD([
           {'params': self.gather_wo_decay(self.model_vowel)},
-          {'params': [self.model_vowel.intermid[2]] + [self.model_vowel.arc_face.weight], 'weight_decay': self.weight_decay}
+          {'params': [*self.model_vowel.intermid[2].parameters()] + [self.model_vowel.arc_face.weight], 'weight_decay': self.weight_decay}
         ], lr=self.lr, momentum=self.momentum, nesterov=True)
         self.optimizer_multihead = torch.optim.SGD([
           {'params': self.gather_wo_decay_multihead(self.model_multihead)},
-          {'params': [self.model_multihead.intermid_root[2]] + [self.model_multihead.arc_face_root.weight +
-                 self.model_multihead.intermid_consonant[2]] + [self.model_multihead.arc_face_consonant.weight + 
-                 self.model_multihead.intermid_vowel[2]] + [self.model_multihead.arc_face_vowel.weight +
-                 self.model_multihead.intermid_unique[2]] + [self.model_multihead.arc_face_unique.weight], 'weight_decay': self.weight_decay}
+          {'params': [*self.model_multihead.intermid_root[2].parameters()] + [self.model_multihead.arc_face_root.weight] +
+                 [*self.model_multihead.intermid_consonant[2].parameters()] + [self.model_multihead.arc_face_consonant.weight] + 
+                 [*self.model_multihead.intermid_vowel[2].parameters()] + [self.model_multihead.arc_face_vowel.weight] +
+                 [*self.model_multihead.intermid_unique[2].parameters()] + [self.model_multihead.arc_face_unique.weight], 'weight_decay': self.weight_decay}
         ], lr=self.lr, momentum=self.momentum, nesterov=True)
+
+        self.criterion = FocalLoss()
     
         self.start_epoch = 0
 
@@ -246,26 +252,26 @@ class MultiHeadTrainer:
 
     def gather_wo_decay(self, model):
       paras = []
-      paras.extend(*model.backbone.parameters())
-      paras.extend(*model.intermid[0].parameters())
-      paras.extend(*model.intermid[-1].parameters())
-      paras.extend(*model.head.parameters())
-      return pars
+      paras.extend([*model.backbone.parameters()])
+      paras.extend([*model.intermid[0].parameters()])
+      paras.extend([*model.intermid[-1].parameters()])
+      paras.extend([*model.head.parameters()])
+      return paras
 
     def gather_wo_decay_multihead(self, model):
       paras = []
 
-      paras.extend(*model.backbone.parameters())
+      paras.extend([*model.backbone.parameters()])
 
-      paras.extend(*(model.intermid_root[0].parameters() + model.intermid_root[-1].parameters()))
-      paras.extend(*model.intermid_consonant[0].parameters() + *model.intermid_consonant[-1].parameters())
-      paras.extend(*model.intermid_vowel[0].parameters() + *model.intermid_vowel[-1].parameters())
-      paras.extend(*model.intermid_unique[0].parameters() + *model.intermid_unique[-1].parameters())
+      paras.extend([*model.intermid_root[0].parameters()] + [*model.intermid_root[-1].parameters()])
+      paras.extend([*model.intermid_consonant[0].parameters()] + [*model.intermid_consonant[-1].parameters()])
+      paras.extend([*model.intermid_vowel[0].parameters()] + [*model.intermid_vowel[-1].parameters()])
+      paras.extend([*model.intermid_unique[0].parameters()] + [*model.intermid_unique[-1].parameters()])
       
-      paras.extend(*model.head_root.parameters())
-      paras.extend(*model.head_consonant.parameters())
-      paras.extend(*model.head_vowel.parameters())
-      paras.extend(*model.head_unique.parameters())
+      paras.extend([*model.head_root.parameters()])
+      paras.extend([*model.head_consonant.parameters()])
+      paras.extend([*model.head_vowel.parameters()])
+      paras.extend([*model.head_unique.parameters()])
 
       return paras
 
@@ -273,7 +279,7 @@ class MultiHeadTrainer:
         root_last_loss = 1000
         consonant_last_loss = 1000
         vowel_last_loss = 1000
-        multi_last_loss = 1000
+        multihead_last_loss = 1000
         for epoch in range(self.start_epoch, self.epoch):
             pbar = tqdm.tqdm(self.dataloader)
             pbar.set_description('training process')
@@ -301,7 +307,7 @@ class MultiHeadTrainer:
             self.model_root.train()
             self.model_consonant.train()
             self.model_vowel.train()
-            self.model_mutihead.train()
+            self.model_multihead.train()
             if self.scheduler == 'plateau':
               self.scheduler_root.step(root_last_loss)
               self.scheduler_consonant.step(consonant_last_loss)
@@ -326,7 +332,7 @@ class MultiHeadTrainer:
                 root_loss = self.criterion(root_preds, roots)
                 root_loss_2 = self.criterion(root_preds_2, roots)
                 root_loss = (root_loss + root_loss_2) / 2
-                root_root.backward()
+                root_loss.backward()
                 self.optimizer_root.step()
                 self.model_root.zero_grad()
 
@@ -338,7 +344,7 @@ class MultiHeadTrainer:
                 self.optimizer_consonant.step()
                 self.model_consonant.zero_grad()
 
-                vowel_preds, vow_preds_2 = self.model_vowel(inputs, vowels)
+                vowel_preds, vowel_preds_2 = self.model_vowel(inputs, vowels)
                 vowel_loss = self.criterion(vowel_preds, vowels)
                 vowel_loss_2 = self.criterion(vowel_preds_2, vowels)
                 vowel_loss = (vowel_loss + vowel_loss_2) / 2
@@ -346,7 +352,7 @@ class MultiHeadTrainer:
                 self.optimizer_vowel.step()
                 self.model_vowel.zero_grad()
                 
-                root, consonant, vowel, unique, roo2, consonant2, vowel2, unique2 = self.model_multihead(input, roots, consonants, vowels, uniques)
+                root, consonant, vowel, unique, root2, consonant2, vowel2, unique2 = self.model_multihead(inputs, roots, consonants, vowels, uniques)
                 multihead_root_loss = self.criterion(root, roots) + self.criterion(root2, roots)
                 multihead_consonant_loss = self.criterion(consonant, consonants) + self.criterion(consonant2, consonants)
                 multihead_vowel_loss = self.criterion(vowel, vowels) + self.criterion(vowel2, vowels)
@@ -533,5 +539,5 @@ class MultiHeadTrainer:
                 }, os.path.join(self.save_dir, '%d.pth'%(epoch+1)))
         
 
-    def criterion(self, preds, trues):
-        return FocalLoss(preds, trues)
+    # def criterion(self, preds, trues):
+    #     return FocalLoss(preds, trues)
