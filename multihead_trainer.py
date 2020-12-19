@@ -28,8 +28,8 @@ class BengaliDataset(Dataset):
     self.transforms = transforms
     self.img = [None] * self.label.shape[0]
 
-    # if cache:
-    #   self.cache_images()
+    if cache:
+      self.cache_images()
 
   def cache_images(self):
     pbar = tqdm.tqdm(range(self.label.shape[0]), position=0, leave=True)
@@ -422,7 +422,7 @@ class MultiHeadTrainer:
                 multihead_vowel_epoch_acc_mean += multihead_vowel_acc
                 multihead_unique_epoch_acc_mean += multihead_unique_acc
 
-                break
+                
 
                 if (it+1) % self.log_step == 0:
                     root_loss_mean /= self.log_step
