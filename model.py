@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import time
 from torch.nn import Parameter
 from torch.autograd import Variable
 from timm.models import create_model
@@ -43,14 +44,16 @@ class MyModel(nn.Module):
     intermid.append(nn.BatchNorm1d(512))
 
     self.intermid = nn.ModuleList(intermid)
+    torch.nn.init.kaiming_normal_(self.intermid[2].weight)
     self.arc_face = ArcMarginProduct(512, self.classes_number)
-    self.head = nn.Linear(512, self.classes_number)
+    self.head = nn.Linear(512, self.classes_number, bias=False)
+
 
   def forward(self, input, label):
     x = self.backbone(input)
-
     for inter in self.intermid:
       x = inter(x)
+
     x = F.normalize(x, p=2, dim=1)
     output = self.arc_face(x, label)
     output2 = self.head(x)
@@ -76,19 +79,23 @@ class MultiHeadModel(nn.Module):
     intermid.append(nn.BatchNorm1d(512))
 
     self.intermid_root = nn.ModuleList(intermid)
+    torch.nn.init.kaiming_normal_(self.intermid_root[2].weight)
     self.intermid_consonant = nn.ModuleList(intermid)
+    torch.nn.init.kaiming_normal_(self.intermid_consonant[2].weight)
     self.intermid_vowel = nn.ModuleList(intermid)
+    torch.nn.init.kaiming_normal_(self.intermid_vowel[2].weight)
     self.intermid_unique = nn.ModuleList(intermid)
+    torch.nn.init.kaiming_normal_(self.intermid_unique[2].weight)
     
     self.arc_face_root = ArcMarginProduct(512, 168)
     self.arc_face_consonant = ArcMarginProduct(512, 11)
     self.arc_face_vowel = ArcMarginProduct(512, 18)
     self.arc_face_unique = ArcMarginProduct(512, 1295)
 
-    self.head_root = nn.Linear(512, 168)
-    self.head_consonant = nn.Linear(512, 11)
-    self.head_vowel = nn.Linear(512, 18)
-    self.head_unique = nn.Linear(512, 1295)
+    self.head_root = nn.Linear(512, 168, bias=False)
+    self.head_consonant = nn.Linear(512, 11, bias=False)
+    self.head_vowel = nn.Linear(512, 18, bias=False)
+    self.head_unique = nn.Linear(512, 1295, bias=False)
 
   def multi_head(self, input, root, consonant, vowel, unique):
     input = self.backbone(input)
@@ -139,7 +146,7 @@ class ArcMarginProduct(nn.Module):
             m: margin
             cos(theta + m)
         """
-    def __init__(self, in_features, out_features, s=30.0, m=0.50, easy_margin=False):
+    def __init__(self, in_features, out_features, s=30.0, m=0.35, easy_margin=False):
         super(ArcMarginProduct, self).__init__()
         self.in_features = in_features
         self.out_features = out_features

@@ -225,6 +225,7 @@ class Trainer:
 
                 root_preds = self.model_root(inputs)
                 root_loss = self.criterion(root_preds, roots)
+                print(root_loss.item())
                 root_loss.backward()
                 self.optimizer_root.step()
                 self.model_root.zero_grad()
