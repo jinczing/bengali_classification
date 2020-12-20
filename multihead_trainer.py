@@ -242,7 +242,7 @@ class MultiHeadTrainer:
             self.optimizer_root.load_state_dict(ckpt['optimizer_root_state_dict'])
             self.optimizer_consonant.load_state_dict(ckpt['optimizer_consonant_state_dict'])
             self.optimizer_vowel.load_state_dict(ckpt['optimizer_vowel_state_dict'])
-            self.optimizer_multihaed.load_state_dict(ckpt['optimizer_multihead_state_dict'])
+            self.optimizer_multihead.load_state_dict(ckpt['optimizer_multihead_state_dict'])
             self.start_epoch = ckpt['epoch']
         if self.scheduler == 'plateau':
           self.scheduler_root = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_root, mode='min', factor=0.1, patience=5, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
