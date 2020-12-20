@@ -245,10 +245,10 @@ class MultiHeadTrainer:
             self.optimizer_multihaed.load_state_dict(ckpt['optimizer_multihead_state_dict'])
             self.start_epoch = ckpt['epoch']
         if self.scheduler == 'plateau':
-          self.scheduler_root = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_root, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
-          self.scheduler_consonant = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_consonant, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
-          self.scheduler_vowel = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_vowel, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
-          self.scheduler_multihead = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_multihead, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
+          self.scheduler_root = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_root, mode='min', factor=0.1, patience=5, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
+          self.scheduler_consonant = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_consonant, mode='min', factor=0.1, patience=5, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
+          self.scheduler_vowel = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_vowel, mode='min', factor=0.1, patience=5, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
+          self.scheduler_multihead = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_multihead, mode='min', factor=0.1, patience=5, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
         else:
           self.scheduler_root = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer_root, T_max=epoch, last_epoch=self.start_epoch-1,
                     eta_min=lr_min)
@@ -492,6 +492,11 @@ class MultiHeadTrainer:
             multihead_consonant_epoch_acc_mean /= len(pbar)
             multihead_vowel_epoch_acc_mean /= len(pbar)
             multihead_unique_epoch_acc_mean /= len(pbar)
+
+            root_last_loss = root_epoch_loss_mean
+            consonant_last_loss = consonant_epoch_loss_mean
+            vowel_last_loss = vowel_epoch_loss_mean
+            multihead_last_loss = multihead_epoch_loss_mean
 
             # validate
             pbar = tqdm.tqdm(self.val_dataloader)
