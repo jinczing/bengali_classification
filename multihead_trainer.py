@@ -19,12 +19,14 @@ from torch.autograd import Variable
 
 
 class BengaliDataset(Dataset):
-  def __init__(self, label_csv, train_folder, transforms, cache=True):
+  def __init__(self, label_csv, unique_csv, train_folder, transforms, cache=True):
     self.label_csv = label_csv
+    self.unique_csv = unique_csv
     self.train_folder = train_folder
     self.label = pd.read_csv(self.label_csv)
+    unique_df = pd.read_csv(self.unique_csv)
     self.label[['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']] = self.label[['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']].astype('uint8')
-    self.uniques = self.label.grapheme.unique()
+    self.uniques = unique_df.grapheme.unique()
     self.transforms = transforms
     self.img = [None] * self.label.shape[0]
 
@@ -142,10 +144,10 @@ class MultiHeadTrainer:
                dataset_path='./drive/MyDrive/datasets/car classification/train_data', 
                val_path='./drive/MyDrive/datasets/car classification/val_data', 
                val_crop='five', batch_size=128, model_name='tf_efficientnet_b3_ns', 
-               lr=0.001, lr_min=0.0001, weight_decay=1e-4, momentum=0.9, scheduler='plateau',log_step=25, save_step=10,
+               lr=0.001, lr_min=0.0001, weight_decay=1e-4, momentum=0.9, scheduler='plateau', dropout=0.2, log_step=25, save_step=10,
                log_path='./drive/My Drive/cars_log.txt', cutout=False, style_aug=False,
                resume=False, resume_path='./drive/My Drive/ckpt/', train_csv='./train_labels.csv', 
-               val_csv='./val_labels.csv', save_dir='../drive/MyDrive/ckpt/grapheme/'):
+               val_csv='./val_labels.csv', unique_csv='./train_labels.csv', save_dir='../drive/MyDrive/ckpt/grapheme/'):
 
         # initialize attributes
         self.epoch = epoch
@@ -157,6 +159,7 @@ class MultiHeadTrainer:
         self.lr = lr
         self.lr_mi = lr_min
         self.weight_decay = weight_decay
+        self.dropout = dropout
         self.momentum = momentum
         self.scheduler = scheduler
         self.log_step = log_step
@@ -168,6 +171,7 @@ class MultiHeadTrainer:
         self.resume_path = resume_path
         self.train_csv = train_csv
         self.val_csv = val_csv
+        self.unique_csv = unique_csv
         self.save_dir = save_dir
         if model_name == 'tf_efficientnet_b0_ns':
             self.input_size = (224, 224)
@@ -191,15 +195,15 @@ class MultiHeadTrainer:
         self.transform = transforms.Compose(transform)
         self.val_transform = transforms.Compose(val_transform)
 
-        self.dataset = BengaliDataset(self.train_csv, self.dataset_path, self.transform, cache=True)
-        self.val_dataset = BengaliDataset(self.val_csv, self.dataset_path, self.transform, cache=True)
+        self.dataset = BengaliDataset(self.train_csv, self.unique_csv, self.dataset_path, self.transform, cache=True)
+        self.val_dataset = BengaliDataset(self.val_csv, self.unique_csv, self.dataset_path, self.transform, cache=True)
         self.dataloader = DataLoader(self.dataset, batch_size=self.batch_size, num_workers=0, shuffle=True)
         self.val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=1, shuffle=True)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model_root = MyModel(self.input_size, self.model_name, 168, pretrained=True, dropout=0.2).to('cuda')
-        self.model_consonant = MyModel(self.input_size, self.model_name, 11, pretrained=True, dropout=0.2).to('cuda')
-        self.model_vowel = MyModel(self.input_size, self.model_name, 18, pretrained=True, dropout=0.2).to('cuda')
-        self.model_multihead = MultiHeadModel(self.input_size, self.model_name, pretrained=True, dropout=0.2).to('cuda')
+        self.model_root = MyModel(self.input_size, self.model_name, 168, pretrained=True, dropout=self.dropout).to('cuda')
+        self.model_consonant = MyModel(self.input_size, self.model_name, 11, pretrained=True, dropout=self.dropout).to('cuda')
+        self.model_vowel = MyModel(self.input_size, self.model_name, 18, pretrained=True, dropout=self.dropout).to('cuda')
+        self.model_multihead = MultiHeadModel(self.input_size, self.model_name, pretrained=True, dropout=self.dropout).to('cuda')
         # self.optimizer = optim.SGD([
 #                             {'params': paras_wo_bn[:-1], 'weight_decay': 4e-5},
 #                             {'params': [paras_wo_bn[-1]] + [self.head.kernel], 'weight_decay': 4e-4},
@@ -376,14 +380,22 @@ class MultiHeadTrainer:
                 self.model_vowel.zero_grad()
                 
                 root, consonant, vowel, unique, root2, consonant2, vowel2, unique2 = self.model_multihead(inputs, roots, consonants, vowels, uniques)
-                multihead_root_loss = (1/4)*self.criterion(root, roots) + (1/4)*self.criterion(root2, roots)
-                multihead_consonant_loss = (1/4)*self.criterion(consonant, consonants) + (1/4)*self.criterion(consonant2, consonants)
-                multihead_vowel_loss = (1/4)*self.criterion(vowel, vowels) + (1/4)*self.criterion(vowel2, vowels)
-                multihead_unique_loss = (1/4)*self.criterion(unique, uniques) + (1/4)*self.criterion(unique2, uniques)
+                multihead_root_loss = (1/4)*self.criterion(root, roots)
+                multihead_root_loss_2 = (1/4)*self.criterion(root2, roots)
+                multihead_consonant_loss = (1/4)*self.criterion(consonant, consonants)
+                multihead_consonant_loss_2 = (1/4)*self.criterion(consonant2, consonants)
+                multihead_vowel_loss = (1/4)*self.criterion(vowel, vowels)
+                multihead_vowel_loss_2 = (1/4)*self.criterion(vowel2, vowels)
+                multihead_unique_loss = (1/4)*self.criterion(unique, uniques)
+                multihead_unique_loss_2 = (1/4)*self.criterion(unique2, uniques)
                 multihead_root_loss.backward(retain_graph=True)
+                multihead_root_loss_2.backward(retain_graph=True)
                 multihead_consonant_loss.backward(retain_graph=True)
+                multihead_consonant_loss_2.backward(retain_graph=True)
                 multihead_vowel_loss.backward(retain_graph=True)
-                multihead_unique_loss.backward()
+                multihead_vowel_loss_2.backward(retain_graph=True)
+                multihead_unique_loss.backward(retain_graph=True)
+                multihead_unique_loss_2.backward()
                 self.optimizer_multihead.step()
                 self.model_multihead.zero_grad()
                 
@@ -392,11 +404,17 @@ class MultiHeadTrainer:
                 root_loss_mean += (root_loss.item() + root_loss_2.item())
                 consonant_loss_mean += (consonant_loss.item() + consonant_loss_2.item())
                 vowel_loss_mean += (vowel_loss.item() + vowel_loss_2.item())
-                multihead_loss_mean += (multihead_root_loss.item() + multihead_consonant_loss.item() + multihead_vowel_loss.item() + multihead_unique_loss.item())
+                multihead_loss_mean += (multihead_root_loss.item() + multihead_root_loss_2.item() + 
+                multihead_consonant_loss.item() + multihead_consonant_loss_2.item() +
+                multihead_vowel_loss.item() + multihead_vowel_loss_2.item() +
+                multihead_unique_loss.item() + multihead_unique_loss_2.item())
                 root_epoch_loss_mean += (root_loss.item() + root_loss_2.item())
                 consonant_epoch_loss_mean += (consonant_loss.item() + consonant_loss_2.item())
                 vowel_epoch_loss_mean += (vowel_loss.item() + vowel_loss_2.item())
-                multihead_epoch_loss_mean += (multihead_root_loss.item() + multihead_consonant_loss.item() + multihead_vowel_loss.item() + multihead_unique_loss.item())
+                multihead_epoch_loss_mean += (multihead_root_loss.item() + multihead_root_loss_2.item() + 
+                multihead_consonant_loss.item() + multihead_consonant_loss_2.item() +
+                multihead_vowel_loss.item() + multihead_vowel_loss_2.item() +
+                multihead_unique_loss.item() + multihead_unique_loss_2.item())
 
                 root_acc = (root_preds.argmax(-1) == roots).sum().item() / roots.size()[0]
                 consonant_acc = (consonant_preds.argmax(-1) == consonants).sum().item() / consonants.size()[0]
@@ -428,6 +446,7 @@ class MultiHeadTrainer:
                     root_loss_mean /= self.log_step
                     consonant_loss_mean /= self.log_step
                     vowel_loss_mean /= self.log_step
+                    multihead_loss_mean /= self.log_step
                     root_acc_mean /= self.log_step
                     consonant_acc_mean /= self.log_step
                     vowel_acc_mean /= self.log_step
@@ -485,6 +504,7 @@ class MultiHeadTrainer:
             consonant_val_acc_mean = 0
             vowel_val_acc_mean = 0
             unique_val_acc_mean = 0
+            unique_val_max_prob_mean = 0
             self.model_root.eval()
             self.model_consonant.eval()
             self.model_vowel.eval()
@@ -528,7 +548,10 @@ class MultiHeadTrainer:
                     multihead_val_loss_mean += multihead_root_loss.item() + multihead_consonant_loss.item() + multihead_vowel_loss.item() + multihead_unique_loss.item()
 
                     unique_val_acc_mean += (unique.argmax(-1) == uniques).sum().item() / uniques.size()[0]
-                    if unique.max(-1).values[0] > 0.5:
+                    unique_prob = F.softmax(unique, dim=1)
+                    unique_val_max_prob_mean += unique_prob.max(-1).values[0]
+                    #print(unique_prob.sum())
+                    if unique_prob.max(-1).values[0] > 0.5:
                       root_acc = (root.argmax(-1) == roots).sum().item() / roots.size()[0]
                       consonant_acc = (consonant.argmax(-1) == consonants).sum().item() / consonants.size()[0]
                       vowel_acc = (vowel.argmax(-1) == vowels).sum().item() / vowels.size()[0]
@@ -555,6 +578,7 @@ class MultiHeadTrainer:
 
             multihead_val_loss_mean /= len(pbar)
             unique_val_acc_mean /= len(pbar)
+            unique_val_max_prob_mean /= len(pbar)
 
 
             print('root_loss_mean:', root_epoch_loss_mean, 'root_acc_mean:', root_epoch_acc_mean)
@@ -567,6 +591,7 @@ class MultiHeadTrainer:
             print('vowel_val_loss_mean:', vowel_val_loss_mean, 'vowel_val_acc_mean:', vowel_val_acc_mean)
 
             print('unique_val_acc_mean:', unique_val_acc_mean)
+            print('unique_val_max_prob_mean:', unique_val_max_prob_mean)
 
             print('multihead_val_loss_mean:', multihead_val_loss_mean)
             
