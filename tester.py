@@ -81,7 +81,7 @@ class MultiHeadTester:
                model_name='tf_efficientnet_b3_ns', 
                test_csv='./train_labels.csv', 
                unique_csv='./train_labels.csv',
-               output_dir='../drive/MyDrive/ckpt/grapheme/',
+               output_dir='../drive/MyDrive/ckpt/grapheme/submission.csv',
                ckpt='../drive/MyDrive/ckpt/grapheme/20.pth'):
 
         # initialize attributes
@@ -180,7 +180,7 @@ class MultiHeadTester:
             target.append(int(c))
             count += 1
 
-        sub_fn = 'submission.csv'
+        sub_fn = self.output_dir
         sub = pd.DataFrame({'row_id': row_id, 'target': target})
         sub.to_csv(sub_fn, index=False)
         print(f'Done wrote to {sub_fn}')
