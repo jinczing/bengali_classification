@@ -30,8 +30,8 @@ class BengaliDataset(Dataset):
     self.transforms = transforms
     self.img = [None] * self.label.shape[0]
 
-    if cache:
-      self.cache_images()
+    # if cache:
+    #   self.cache_images()
 
   def cache_images(self):
     pbar = tqdm.tqdm(range(self.label.shape[0]), position=0, leave=True)
@@ -75,9 +75,9 @@ class FocalLoss(nn.Module):
     def forward(self, input, target):
         timer = time.time()
         if input.dim()>2:
-            input = input.view(input.size(0),input.size(1),-1)  # N,C,H,W => N,C,H*W
-            input = input.transpose(1,2)    # N,C,H*W => N,H*W,C
-            input = input.contiguous().view(-1,input.size(2))   # N,H*W,C => N*H*W,C
+            input = input.view(input.size(0),input.size(1),-1)
+            input = input.transpose(1,2)
+            input = input.contiguous().view(-1,input.size(2))
         target = target.view(-1,1)
 
         logpt = F.log_softmax(input)
@@ -93,7 +93,6 @@ class FocalLoss(nn.Module):
             logpt = logpt * Variable(at)
 
         loss = -1 * (1-pt)**self.gamma * logpt
-        #print('focal loss: ', time.time() - timer)
         if self.size_average: return loss.mean()
         else: return loss.sum()
 
@@ -341,7 +340,7 @@ class MultiHeadTrainer:
               self.scheduler_multihead.step()
             batch_number = len(pbar)
             for it, data in enumerate(pbar):
-
+                break
                 inputs = data[0].to(self.device)
                 inputs = inputs.repeat(1, 3, 1, 1)
                 roots = data[1].to(self.device).long()
@@ -556,20 +555,20 @@ class MultiHeadTrainer:
                     unique_prob = F.softmax(unique, dim=1)
                     unique_val_max_prob_mean += unique_prob.max(-1).values[0]
                     #print(unique_prob.sum())
-                    if unique_prob.max(-1).values[0] > 0.5:
-                      root_acc = (root.argmax(-1) == roots).sum().item() / roots.size()[0]
-                      consonant_acc = (consonant.argmax(-1) == consonants).sum().item() / consonants.size()[0]
-                      vowel_acc = (vowel.argmax(-1) == vowels).sum().item() / vowels.size()[0]
-                      root_val_acc_mean += root_acc
-                      consonant_val_acc_mean += consonant_acc
-                      vowel_val_acc_mean += vowel_acc
-                    else:
-                      root_acc = (root_preds.argmax(-1) == roots).sum().item() / roots.size()[0]
-                      consonant_acc = (consonant_preds.argmax(-1) == consonants).sum().item() / consonants.size()[0]
-                      vowel_acc = (vowel_preds.argmax(-1) == vowels).sum().item() / vowels.size()[0]
-                      root_val_acc_mean += root_acc
-                      consonant_val_acc_mean += consonant_acc
-                      vowel_val_acc_mean += vowel_acc
+                    # if unique_prob.max(-1).values[0] > 0.5:
+                    #   root_acc = (root.argmax(-1) == roots).sum().item() / roots.size()[0]
+                    #   consonant_acc = (consonant.argmax(-1) == consonants).sum().item() / consonants.size()[0]
+                    #   vowel_acc = (vowel.argmax(-1) == vowels).sum().item() / vowels.size()[0]
+                    #   root_val_acc_mean += root_acc
+                    #   consonant_val_acc_mean += consonant_acc
+                    #   vowel_val_acc_mean += vowel_acc
+                    # else:
+                    root_acc = (root_preds.argmax(-1) == roots).sum().item() / roots.size()[0]
+                    consonant_acc = (consonant_preds.argmax(-1) == consonants).sum().item() / consonants.size()[0]
+                    vowel_acc = (vowel_preds.argmax(-1) == vowels).sum().item() / vowels.size()[0]
+                    root_val_acc_mean += root_acc
+                    consonant_val_acc_mean += consonant_acc
+                    vowel_val_acc_mean += vowel_acc
 
                 
             root_val_loss_mean /= len(pbar)

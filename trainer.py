@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import tqdm
 import csv
@@ -11,6 +13,8 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import transforms
 from PIL import Image
+from torch.autograd import Variable
+import time
 
 
 class BengaliDataset(Dataset):
@@ -25,8 +29,8 @@ class BengaliDataset(Dataset):
     self.transforms = transforms
     self.img = [None] * self.label.shape[0]
 
-    # if cache:
-    #   self.cache_images()
+    if cache:
+      self.cache_images()
 
   def cache_images(self):
     pbar = tqdm.tqdm(range(self.label.shape[0]), position=0, leave=True)
@@ -129,6 +133,8 @@ class Trainer:
         self.save_dir = save_dir
         if model_name == 'tf_efficientnet_b0_ns':
             self.input_size = (224, 224)
+        elif model_name == 'tf_efficientnet_b2_ns':
+            self.input_size = (260, 260)
         elif model_name == 'tf_efficientnet_b3_ns':
             self.input_size = (300, 300)
         elif model_name == 'tf_efficientnet_b4_ns':
@@ -162,6 +168,8 @@ class Trainer:
         self.optimizer_vowel = torch.optim.SGD(self.model_vowel.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay, nesterov=True)
     
         self.start_epoch = 0
+
+        self.criterion = FocalLoss()
 
         if resume:
             ckpt = torch.load(self.resume_path)
@@ -225,7 +233,6 @@ class Trainer:
 
                 root_preds = self.model_root(inputs)
                 root_loss = self.criterion(root_preds, roots)
-                print(root_loss.item())
                 root_loss.backward()
                 self.optimizer_root.step()
                 self.model_root.zero_grad()
@@ -382,5 +389,37 @@ class Trainer:
                 }, os.path.join(self.save_dir, '%d.pth'%(epoch+1)))
         
 
-    def criterion(self, preds, trues):
+    def criterion_2(self, preds, trues):
         return torch.nn.CrossEntropyLoss()(preds, trues)
+
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2, alpha=0.25, size_average=True):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        if isinstance(alpha,(float,int)): self.alpha = torch.Tensor([alpha,1-alpha])
+        if isinstance(alpha,list): self.alpha = torch.Tensor(alpha)
+        self.size_average = size_average
+
+    def forward(self, input, target):
+        if input.dim()>2:
+            input = input.view(input.size(0),input.size(1),-1)
+            input = input.transpose(1,2)
+            input = input.contiguous().view(-1,input.size(2))
+        target = target.view(-1,1)
+
+        logpt = F.log_softmax(input)
+        logpt = logpt.gather(1,target)
+        logpt = logpt.view(-1)
+        pt = Variable(logpt.data.exp())
+
+        if self.alpha is not None:
+            if self.alpha.type()!=input.data.type():
+                self.alpha = self.alpha.type_as(input.data)
+            select = (target!=0).type(torch.LongTensor).cuda()
+            at = self.alpha.gather(0,select.data.view(-1))
+            logpt = logpt * Variable(at)
+
+        loss = -1 * (1-pt)**self.gamma * logpt
+        if self.size_average: return loss.mean()
+        else: return loss.sum()
