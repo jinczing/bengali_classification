@@ -1,207 +1,201 @@
+# test
+# reimport trainer and tester if you modify them
+import trainer
+import multihead_trainer
+import tester
+import model
+import importlib
+importlib.reload(model)
+importlib.reload(trainer)
+importlib.reload(multihead_trainer)
+importlib.reload(tester)
+from trainer import Trainer
+from multihead_trainer import MultiHeadTrainer
+from tester import Tester
+
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import tqdm
 import csv
 import os
+import cv2
+import pandas as pd
+import time
 from timm.models import create_model
 import torch.autograd.profiler as profiler
 from torch.utils.data import Dataset, DataLoader
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import transforms
-
-class MultiScaleFiveCrop(object):
-    def __init__(self, sizes=(680, 600, 528)):
-        self.sizes = sizes # 680, 528, 410
-
-    def __call__(self, img):
-        c, h, w = img.size()
-        if h<w:
-            s = h
-        else:
-            s = w
-        scales = tuple(map(lambda x: x/s, self.sizes))
-        img = img.repeat(3, 1, 1, 1)
-        cc = []
-        
-        for i in range(len(self.sizes)):
-            c = ()
-            im = transforms.Resize(tuple(map(lambda x: int(x*scales[i]*(256/224)), (h, w))))(img[i, :, :, :]) # c, h, w, 3
-            crops = transforms.FiveCrop(tuple(map(lambda x: int(x*scales[i]), (h, w))))(im.unsqueeze(0))
-            c += crops
-            cc.append(torch.cat(c))
-
-        return cc
+from PIL import Image
+from model import MyModel, MultiHeadModel
+from torch.autograd import Variable
 
 
-class Tester:
-    def __init__(self, epoch, dataset_path='./drive/My Drive/datasets/car classification/train_dataset', 
-                 val_path='./drive/My Drive/datasets/car classification/val_data',
-                 batch_size=128, model_name='tf_efficientnet_b0_ns', ckpt_path='./drive/My Drive/ckpt/190.pth', 
-                 test_number=5000,
-                 pseudo_test=True, crop='five', csv_path='', mode='fix', sizes=(680, 600, 528)):
-        self.epoch = epoch
+class BengaliDataset(Dataset):
+  def __init__(self, label_csv, unique_csv, train_folder, transforms, cache=True, test=True):
+    self.label_csv = label_csv
+    self.unique_csv = unique_csv
+    self.train_folder = train_folder
+    self.label = pd.read_csv(self.label_csv)
+    self.label = self.label[self.label['component']=='grapheme_root']
+    self.label = self.label.reset_index(drop=True)
+    unique_df = pd.read_csv(self.unique_csv)
+    #names = self.label[self.label['component']=='grapheme_root']
+    self.names = self.label['image_id'].values
+    self.uniques = unique_df.grapheme.unique()
+    self.transforms = transforms
+    self.img = [None] * self.label.shape[0]
+    self.test = test
+
+    if cache:
+      self.cache_images()
+
+  def cache_images(self):
+    pbar = tqdm.tqdm(range(self.label.shape[0]), position=0, leave=True)
+    pbar.set_description('caching images...')
+    for i in pbar:
+      self.img[i] = self.load_image(i)
+
+  def load_image(self, idx):
+    img = self.img[idx]
+    if img is None:
+      name = self.label.loc[idx]['image_id']
+      #img = cv2.imread(os.path.join(self.train_folder, name+'.jpg'), cv2.IMREAD_GRAYSCALE)
+      img = Image.open(os.path.join(self.train_folder, name+'.jpg'))
+      return self.transforms(img)
+    else:
+      return self.transforms(img)
+
+  def __getitem__(self, idx):
+    if not self.test:
+      img = self.load_image(idx)
+      root = self.label.loc[idx]['grapheme_root']
+      consonant = self.label.loc[idx]['consonant_diacritic']
+      vowel = self.label.loc[idx]['vowel_diacritic']
+      unique = np.where(self.uniques == self.label.grapheme[idx])[0][0]
+      return transforms.ToTensor()(img), root, consonant, vowel, unique
+    else:
+      img = self.load_image(idx)
+      root = 0
+      consonant = 0
+      vowel = 0
+      unique = 0
+      return transforms.ToTensor()(img), root, consonant, vowel, unique
+
+  def __len__(self):
+    return self.label.shape[0]
+
+
+class MultiHeadTester:
+    def __init__(self,
+               dataset_path='./drive/MyDrive/datasets/car classification/train_data', 
+               batch_size=1, 
+               model_name='tf_efficientnet_b3_ns', 
+               test_csv='./train_labels.csv', 
+               unique_csv='./train_labels.csv',
+               output_dir='../drive/MyDrive/ckpt/grapheme/',
+               ckpt='../drive/MyDrive/ckpt/grapheme/20.pth'):
+
+        # initialize attributes
         self.dataset_path = dataset_path
-        self.val_path = val_path
         self.batch_size = batch_size
         self.model_name = model_name
-        self.ckpt_path = ckpt_path
-        self.test_number = test_number
-        self.pseudo_test = pseudo_test
-        self.crop = crop
-        self.csv_path = csv_path
-        self.mode = mode
-        self.sizes = sizes
-
+        self.test_csv = test_csv
+        self.unique_csv = unique_csv
+        self.output_dir = output_dir
+        self.ckpt = ckpt
+        
         if model_name == 'tf_efficientnet_b0_ns':
             self.input_size = (224, 224)
         elif model_name == 'tf_efficientnet_b3_ns':
             self.input_size = (300, 300)
         elif model_name == 'tf_efficientnet_b4_ns':
-            self.input_size = (480, 480)
+          scaleelf.input_size = (380, 380)
         elif model_name == 'tf_efficientnet_b6_ns':
-            self.input_size = (680, 680) # 528
+            self.input_size = (528, 528)
         else:
             raise Exception('non-valid model name')
         
         # Compose transforms
         transform = []
-        fill = lambda i: transforms.Resize((i.size[1]*(2**torch.ceil(torch.log2(torch.tensor(self.input_size[1]/i.size[1])))), 
-                  i.size[0]*(2**torch.ceil(torch.log2(torch.tensor(self.input_size[1]/i.size[1]))))))(i) if i.size[0] < self.input_size[0] or i.size[1] < self.input_size[1] else i
-        if crop == 'center':
-            transform.append(transforms.CenterCrop(self.input_size[0]))
-            transform.append(transforms.ToTensor())
-            transform.append(transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]))
-        elif crop == 'five':
-            transform.append(transforms.Lambda(fill))
-            transform.append(transforms.FiveCrop(self.input_size[0]))
-            transform.append(transforms.Lambda(lambda crops: torch.stack([transforms.ToTensor()(crop) for crop in crops])))
-            transform.append(transforms.Lambda(lambda crops: torch.stack([transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])(crop) for crop in crops])))
+        transform += [transforms.Resize(self.input_size)]
         self.transform = transforms.Compose(transform)
-        
-        if self.pseudo_test:
-            if crop == 'multi':
-                self.transform_val = []
-                self.dataset = []
-                self.dataloader = []
-                for i in range(len(self.sizes)):
-                    self.transform_val.append(self.get_transform_val((self.sizes[i], self.sizes[i])))
-                    self.dataset.append(ImageFolder(self.dataset_path, transform=self.transform_val[i]))
-                    self.dataloader.append(DataLoader(self.dataset[i], batch_size=self.batch_size, num_workers=1, shuffle=False))
-            else:
-                self.dataset = ImageFolder(self.dataset_path, transform=self.transform_val)
-                self.dataloader = DataLoader(self.dataset, batch_size=self.batch_size, num_workers=1, shuffle=False)
-        
+
+        self.test_dataset = BengaliDataset(self.test_csv, self.unique_csv, self.dataset_path, self.transform, cache=True)
+        self.names = self.test_dataset.names
+        self.test_dataloader = DataLoader(self.test_dataset, batch_size=self.batch_size, num_workers=0, shuffle=False)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = create_model(model_name, num_classes=196).to(self.device)
-        if self.mode == 'fix':
-            ckpt = torch.load(self.ckpt_path)
-            self.model.load_state_dict(ckpt['model'])
-        else:
-            ckpt = torch.load(self.ckpt_path)
-            self.model.load_state_dict(ckpt['model_state_dict'])
-        self.start_epoch = 0
+        self.model_root = MyModel(self.input_size, self.model_name, 168, pretrained=True, dropout=0).to('cuda')
+        self.model_consonant = MyModel(self.input_size, self.model_name, 11, pretrained=True, dropout=0).to('cuda')
+        self.model_vowel = MyModel(self.input_size, self.model_name, 18, pretrained=True, dropout=0).to('cuda')
+        self.model_multihead = MultiHeadModel(self.input_size, self.model_name, pretrained=True, dropout=0).to('cuda')
 
-        l = [d.name for d in os.scandir(self.val_path) if d.is_dir()]
-        l.sort()
-        l[l.index('Ram CV Cargo Van Minivan 2012')] = 'Ram C/V Cargo Van Minivan 2012'
-        self.label_texts = l
-
-    def get_transform_val(self, size):
-        if self.crop == 'five' or self.crop == 'multi':
-            transform_val = [transforms.Resize(int(size[0]*(1.14))), transforms.FiveCrop(size)]
-            transform_val.append(transforms.Lambda(lambda crops: torch.stack([transforms.ToTensor()(crop) for crop in crops])))
-            transform_val.append(transforms.Lambda(lambda crops: torch.stack([transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])(crop) for crop in crops])))
-        else:
-            transform_val = [transforms.Resize(int(size[0]*(1.14))), transforms.CenterCrop(size)]
-            transform_val.append(transforms.ToTensor())
-            transform_val.append(transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]))
-
-        return transforms.Compose(transform_val)
-
-    def label_to_text(self, labels):
-        texts = []
-        names = sorted([i for _, _, i in os.walk(os.path.join(self.dataset_path, 'dummy'))][0])
-        for i, l in enumerate(labels):
-            texts.append([names[i].split('.')[0], self.label_texts[l.item()]])
-        texts.insert(0, ['id', 'label'])
-        return texts
-
-    def p_test(self):
-        acc_mean = 0
-        loss_mean = 0
-
-        for epoch in range(self.start_epoch, self.epoch):
-            pbar = tqdm.tqdm(zip(*self.dataloader))
-            pbar.set_description('testing process')
-            self.model.eval()
-            tested_number = 0
-            with torch.no_grad():
-                for it, data in enumerate(pbar):
-                    if self.crop != 'multi':
-                        inputs = data[0].to(self.device)
-                        labels = data[1].to(self.device)
-                        
-                        if self.crop == 'center':
-                            preds = self.model(inputs)
-                        elif self.crop == 'five':
-                            bs, ncrops, c, h, w = inputs.size()
-                            preds = self.model(inputs.view(-1, c, h, w))
-                            preds = preds.view(bs, ncrops, -1).mean(1)
-                    else:
-                        labels = data[0][1].to(self.device)
-                        preds_l = []
-                        for i in range(len(self.sizes)):
-                            bs, ncrops, c, h, w = data[i][0].size()
-                            inputs = data[i][0].to(self.device)
-                            preds_l.append(self.model(inputs.view(-1, c, h, w)))
-                            preds_l[i] = preds_l[i].view(bs, ncrops, -1).mean(1)
-
-                    preds = torch.stack(preds_l, dim=1).mean(1)
-                    loss = self.criterion(preds, labels)
-                    loss_mean += loss.item()
-                    acc = (preds.argmax(-1) == labels).sum().item() / labels.size()[0]
-                    acc_mean += acc
-                    tested_number += self.batch_size
-
-        acc_mean /= len(self.dataloader[0]) #(len(pbar))
-        loss_mean /= len(self.dataloader[0]) #(len(pbar))
-        print('acc_mean:', acc_mean, 'loss_mean:', loss_mean)
+        ckpt = torch.load(self.ckpt)
+        self.model_root.load_state_dict(ckpt['model_root_state_dict'])
+        self.model_consonant.load_state_dict(ckpt['model_consonant_state_dict'])
+        self.model_vowel.load_state_dict(ckpt['model_vowel_state_dict'])
+        self.model_multihead.load_state_dict(ckpt['model_multihead_state_dict'])
 
     def test(self):
-        for epoch in range(self.start_epoch, self.epoch):
-            pbar = tqdm.tqdm(zip(*self.dataloader))
-            pbar.set_description('testing process')
-            self.model.eval()
-            pred_labels = None
-            with torch.no_grad():
-                for it, data in enumerate(pbar):
-                    if self.crop != 'multi':
-                        inputs = data[0].to(self.device)
-                        if self.crop == 'center':
-                            preds = self.model(inputs)
-                        elif self.crop == 'five':
-                            bs, ncrops, c, h, w = inputs.size()
-                            preds = self.model(inputs.view(-1, c, h, w))
-                            preds = preds.view(bs, ncrops, -1).mean(1)
-                    else:
-                        preds_l = []
-                        for i in range(len(self.sizes)):
-                            bs, ncrops, c, h, w = data[i][0].size()
-                            inputs = data[i][0].to(self.device)
-                            preds_l.append(self.model(inputs.view(-1, c, h, w)))
-                            preds_l[i] = preds_l[i].view(bs, ncrops, -1).mean(1)
+        pbar = tqdm.tqdm(self.test_dataloader)
+        pbar.set_description('testing process')
+        self.model_root.eval()
+        self.model_consonant.eval()
+        self.model_vowel.eval()
+        self.model_multihead.eval()
+        output_roots = []
+        output_consonants = []
+        output_vowels = []
+        count = 0
+        with torch.no_grad():
+            for it, data in enumerate(pbar):
+                inputs = data[0].to(self.device)
+                inputs = inputs.repeat(1, 3, 1, 1)
+                roots = data[1].to(self.device).long()
+                consonants = data[2].to(self.device).long()
+                vowels = data[3].to(self.device).long()
+                uniques = data[4].to(self.device).long()
 
-                        preds = torch.stack(preds_l, dim=1).mean(1)
+                root_preds, root_preds_2 = self.model_root(inputs, roots)
+                self.model_root.zero_grad()
 
-                    if pred_labels == None:
-                        pred_labels = preds.argmax(-1)
-                    else:
-                        pred_labels = torch.cat([pred_labels, preds.argmax(-1)])
-                        
-            pred_text = self.label_to_text(pred_labels)
-            with open(self.csv_path, 'w', newline='\n') as file:
-                writer = csv.writer(file)
-                writer.writerows(pred_text)
+                consonant_preds, consonant_preds_2 = self.model_consonant(inputs, consonants)
+                self.model_consonant.zero_grad()
 
-    def criterion(self, preds, trues):
-        return torch.nn.CrossEntropyLoss()(preds, trues)
+                vowel_preds, vowel_preds_2 = self.model_vowel(inputs, vowels)
+                self.model_vowel.zero_grad()
+                
+                root, consonant, vowel, unique, root2, consonant2, vowel2, unique2 = self.model_multihead(inputs, roots, consonants, vowels, uniques)
+                self.model_multihead.zero_grad()
+
+
+                unique_prob = F.softmax(unique, dim=1)
+                
+                for index in range(inputs.shape[0]):
+                  #print('unique:', unique_prob.max(-1).values[index])
+                  if unique_prob.max(-1).values[index] > 0.5:
+                    output_roots.append(root.argmax(-1)[index].item()) 
+                    output_consonants.append(consonant.argmax(-1)[index].item())
+                    output_vowels.append(vowel.argmax(-1)[index].item()) 
+                  else:
+                    output_roots.append(root_preds.argmax(-1)[index].item())
+                    output_consonants.append(consonant_preds.argmax(-1)[index].item())
+                    output_vowels.append(vowel_preds.argmax(-1)[index].item())
+
+        row_id, target = [], []
+        for iid, r, v, c in zip(self.names, output_roots, output_consonants, output_vowels):
+            row_id.append(iid + '_grapheme_root')
+            target.append(int(r))
+            row_id.append(iid + '_vowel_diacritic')
+            target.append(int(v))
+            row_id.append(iid + '_consonant_diacritic')
+            target.append(int(c))
+            count += 1
+
+        sub_fn = 'submission.csv'
+        sub = pd.DataFrame({'row_id': row_id, 'target': target})
+        sub.to_csv(sub_fn, index=False)
+        print(f'Done wrote to {sub_fn}')
+
