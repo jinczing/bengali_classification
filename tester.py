@@ -1,18 +1,4 @@
 # test
-# reimport trainer and tester if you modify them
-import trainer
-import multihead_trainer
-import tester
-import model
-import importlib
-importlib.reload(model)
-importlib.reload(trainer)
-importlib.reload(multihead_trainer)
-importlib.reload(tester)
-from trainer import Trainer
-from multihead_trainer import MultiHeadTrainer
-from tester import Tester
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
