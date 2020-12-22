@@ -92,10 +92,10 @@ class MultiHeadModel(nn.Module):
     self.arc_face_vowel = Arcface(512, 18)
     self.arc_face_unique = Arcface(512, 1295)
 
-    self.head_root = nn.Linear(512, 168, bias=False)
-    self.head_consonant = nn.Linear(512, 11, bias=False)
-    self.head_vowel = nn.Linear(512, 18, bias=False)
-    self.head_unique = nn.Linear(512, 1295, bias=False)
+    # self.head_root = nn.Linear(512, 168, bias=False)
+    # self.head_consonant = nn.Linear(512, 11, bias=False)
+    # self.head_vowel = nn.Linear(512, 18, bias=False)
+    # self.head_unique = nn.Linear(512, 1295, bias=False)
 
   def multi_head(self, input, root, consonant, vowel, unique):
     input = self.backbone(input)
@@ -105,30 +105,30 @@ class MultiHeadModel(nn.Module):
       x1 = inter(x1)
     x1 = F.normalize(x1, p=2, dim=1)
     root = self.arc_face_root(x1, root)
-    root2 = self.head_root(x1)
+    #root2 = self.head_root(x1)
     
     x2 = self.intermid_consonant[0](input)
     for inter in self.intermid_consonant[1:]:
       x2 = inter(x2)
     x2 = F.normalize(x2, p=2, dim=1)
     consonant = self.arc_face_consonant(x2, consonant)
-    consonant2 = self.head_consonant(x2)
+    #consonant2 = self.head_consonant(x2)
 
     x3 = self.intermid_vowel[0](input)
     for inter in self.intermid_vowel[1:]:
       x3 = inter(x3)
     x3 = F.normalize(x3, p=2, dim=1)
     vowel = self.arc_face_vowel(x3, vowel)
-    vowel2 = self.head_vowel(x3)
+    #vowel2 = self.head_vowel(x3)
 
     x4 = self.intermid_unique[0](input)
     for inter in self.intermid_unique[1:]:
       x4 = inter(x4)
     x4 = F.normalize(x4, p=2, dim=1)
     unique = self.arc_face_unique(x4, unique)
-    unique2 = self.head_unique(x4)
+    #unique2 = self.head_unique(x4)
 
-    return root, consonant, vowel, unique, root2, consonant2, vowel2, unique2
+    return root, consonant, vowel, unique#, root2, consonant2, vowel2, unique2
 
 
   def forward(self, input, root, consonant, vowel, unique):
