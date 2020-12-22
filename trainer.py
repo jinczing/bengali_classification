@@ -15,16 +15,18 @@ from torchvision.transforms import transforms
 from PIL import Image
 from torch.autograd import Variable
 import time
+from model import MyModel
 
 
 class BengaliDataset(Dataset):
-  def __init__(self, label_csv, train_folder, transforms, cache=True):
+  def __init__(self, label_csv, train_folder, transforms, cache=True, degree=15):
     self.label_csv = label_csv
     self.train_folder = train_folder
     self.label = pd.read_csv(self.label_csv)
     #self.label = label.drop(['grapheme'], axis=1, inplace=False)
     self.label[['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']] = self.label[['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']].astype('uint8')
     #mod = pd.read_csv('./bengaliai-cv19/train_multi_diacritics.csv')
+    self.degree = degree
 
     self.transforms = transforms
     self.img = [None] * self.label.shape[0]
@@ -50,6 +52,7 @@ class BengaliDataset(Dataset):
 
   def __getitem__(self, idx):
     img = self.load_image(idx)
+    img = transforms.RandomRotation(self.degree)(img)
     root = self.label.loc[idx]['grapheme_root']
     consonant = self.label.loc[idx]['consonant_diacritic']
     vowel = self.label.loc[idx]['vowel_diacritic']
@@ -120,6 +123,7 @@ class Trainer:
         self.lr_mi = lr_min
         self.weight_decay = weight_decay
         self.momentum = momentum
+        self.degree = degree
         self.scheduler = scheduler
         self.log_step = log_step
         self.save_step = save_step
@@ -150,13 +154,13 @@ class Trainer:
 
         #transform += [transforms.ToPILImage()]
         transform += [transforms.Resize(self.input_size)]
-        transform += [transforms.RandomRotation(self.degree)]
+        #transform += [transforms.RandomRotation(self.degree)]
         #transform += [transforms.ToTensor()]
 
         self.transform = transforms.Compose(transform)
         self.val_transform = transforms.Compose(val_transform)
 
-        self.dataset = BengaliDataset(self.train_csv, self.dataset_path, self.transform, cache=True)
+        self.dataset = BengaliDataset(self.train_csv, self.dataset_path, self.transform, cache=True, degree=self.degree)
         self.val_dataset = BengaliDataset(self.val_csv, self.dataset_path, self.transform, cache=True)
         self.dataloader = DataLoader(self.dataset, batch_size=self.batch_size, num_workers=0, shuffle=True)
         self.val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=1, shuffle=True)
@@ -164,13 +168,16 @@ class Trainer:
         self.model_root = create_model(model_name, pretrained=True, num_classes=168).to(self.device)
         self.model_consonant = create_model(model_name, pretrained=True, num_classes=8).to(self.device)
         self.model_vowel = create_model(model_name, pretrained=True, num_classes=11).to(self.device)
+        #self.model_root = MyModel(self.input_size, backbone=model_name, classes_number=168, pretrained=True, dropout=0).to(self.device)
+        #self.model_consonant = MyModel(self.input_size, backbone=model_name, classes_number=8, pretrained=True, dropout=0).to(self.device)
+        #self.model_vowel = MyModel(self.input_size, backbone=model_name, classes_number=11, pretrained=True, dropout=0).to(self.device)
         self.optimizer_root = torch.optim.SGD(self.model_root.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay, nesterov=True)
         self.optimizer_consonant = torch.optim.SGD(self.model_consonant.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay, nesterov=True)
         self.optimizer_vowel = torch.optim.SGD(self.model_vowel.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay, nesterov=True)
     
         self.start_epoch = 0
 
-        self.criterion = FocalLoss()
+        #self.criterion = FocalLoss()
 
         if resume:
             ckpt = torch.load(self.resume_path)
@@ -254,7 +261,6 @@ class Trainer:
                 
                 self.optimizer_vowel.step()
                 
-                
                 self.model_vowel.zero_grad()
                 
                 
@@ -275,7 +281,7 @@ class Trainer:
                 root_epoch_acc_mean += root_acc 
                 consonant_epoch_acc_mean += consonant_acc 
                 vowel_epoch_acc_mean += vowel_acc
-
+                
                 if (it+1) % self.log_step == 0:
                     root_loss_mean /= self.log_step
                     consonant_loss_mean /= self.log_step
@@ -390,7 +396,7 @@ class Trainer:
                 }, os.path.join(self.save_dir, '%d.pth'%(epoch+1)))
         
 
-    def criterion_2(self, preds, trues):
+    def criterion(self, preds, trues):
         return torch.nn.CrossEntropyLoss()(preds, trues)
 
 class FocalLoss(nn.Module):
