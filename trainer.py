@@ -104,7 +104,7 @@ class Trainer:
                dataset_path='./drive/MyDrive/datasets/car classification/train_data', 
                val_path='./drive/MyDrive/datasets/car classification/val_data', 
                val_crop='five', batch_size=128, model_name='tf_efficientnet_b3_ns', 
-               lr=0.001, lr_min=0.0001, weight_decay=1e-4, momentum=0.9, scheduler='plateau',log_step=25, save_step=10,
+               lr=0.001, lr_min=0.0001, weight_decay=1e-4, momentum=0.9, degree=15, scheduler='plateau',log_step=25, save_step=10,
                log_path='./drive/My Drive/cars_log.txt', cutout=False, style_aug=False,
                resume=False, resume_path='./drive/My Drive/ckpt/', train_csv='./train_labels.csv', 
                val_csv='./val_labels.csv', save_dir='../drive/MyDrive/ckpt/grapheme/'):
@@ -150,6 +150,7 @@ class Trainer:
 
         #transform += [transforms.ToPILImage()]
         transform += [transforms.Resize(self.input_size)]
+        transform += [transforms.RandomRotation(self.degree)]
         #transform += [transforms.ToTensor()]
 
         self.transform = transforms.Compose(transform)
