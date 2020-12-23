@@ -60,10 +60,63 @@ class MyModel(nn.Module):
 
     return output#, output2
 
+class MultiHeadSimpleModel(nn.Module):
+  
+  def __init__(self, input_size, backbone, pretrained=True, dropout=0.2):
+    super(MultiHeadSimpleModel, self).__init__()
+    self.input_size = input_size
+    self.backbone = backbone
+    self.pretrained = pretrained
+    self.dropout=dropout
+
+    self.backbone = create_model(self.backbone, self.pretrained, num_classes=0)
+
+
+    feature_size = self.backbone.state_dict()['bn2.weight'].shape[0]
+    self.root_head = nn.Linear(feature_size, 168, bias=True)
+    self.consonant_head = nn.Linear(feature_size, 168, bias=True)
+    self.vowel_head = nn.Linear(feature_size, 168, bias=True)
+    #self.unique_head = nn.Linear(feature_size, 168, bias=True)
+
+
+    intermid = []
+    intermid.append(nn.BatchNorm1d(feature_size))
+    intermid.append(nn.Dropout(self.dropout))
+    intermid.append(nn.Linear(feature_size, 512))
+    intermid.append(nn.BatchNorm1d(512))
+
+
+    self.intermid_unique = nn.ModuleList(intermid)
+    torch.nn.init.kaiming_normal_(self.intermid_unique[2].weight)
+    self.arc_face_unique = Arcface(512, 1295)
+
+  def multi_head(self, input, unique):
+    input = self.backbone(input)
+
+    root = self.root_head(input)
+    consonant = self.consonant_head(input)
+    vowel = self.vowel_head(input)
+
+    x = self.intermid_unique[0](input)
+    for inter in self.intermid_unique[1:]:
+      x = inter(x)
+    x = F.normalize(x, p=2, dim=1)
+    unique_p = self.arc_face_unique(x, unique)
+
+    return root, consonant, vowel, unique_p
+
+
+  def forward(self, input, unique):
+    multi_head_outputs = self.multi_head(input, unique)
+
+    return multi_head_outputs
+
+
+
 class MultiHeadModel(nn.Module):
   
   def __init__(self, input_size, backbone, pretrained=True, dropout=0.2):
-    super(MultiHeadModel, self).__init__()
+    super(MultiHeadSimpleModel, self).__init__()
     self.input_size = input_size
     self.backbone = backbone
     self.pretrained = pretrained

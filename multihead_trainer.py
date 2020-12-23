@@ -14,7 +14,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import transforms
 from PIL import Image
-from model import MyModel, MultiHeadModel
+from model import MyModel, MultiHeadModel, MultiHeadSimpleModel
 from torch.autograd import Variable
 
 
@@ -51,6 +51,7 @@ class BengaliDataset(Dataset):
 
   def __getitem__(self, idx):
     img = self.load_image(idx)
+    img = transforms.RandomRotation(15)(img)
     root = self.label.loc[idx]['grapheme_root']
     consonant = self.label.loc[idx]['consonant_diacritic']
     vowel = self.label.loc[idx]['vowel_diacritic']
@@ -174,6 +175,8 @@ class MultiHeadTrainer:
         self.save_dir = save_dir
         if model_name == 'tf_efficientnet_b0_ns':
             self.input_size = (224, 224)
+        if model_name == 'tf_efficientnet_b2_ns':
+            self.input_size = (260, 260)
         elif model_name == 'tf_efficientnet_b3_ns':
             self.input_size = (300, 300)
         elif model_name == 'tf_efficientnet_b4_ns':
@@ -202,41 +205,18 @@ class MultiHeadTrainer:
         #self.model_root = MyModel(self.input_size, self.model_name, 168, pretrained=True, dropout=self.dropout).to('cuda')
         #self.model_consonant = MyModel(self.input_size, self.model_name, 11, pretrained=True, dropout=self.dropout).to('cuda')
         #self.model_vowel = MyModel(self.input_size, self.model_name, 18, pretrained=True, dropout=self.dropout).to('cuda')
-        self.model_multihead = MultiHeadModel(self.input_size, self.model_name, pretrained=True, dropout=self.dropout).to('cuda')
-        # self.optimizer = optim.SGD([
-#                             {'params': paras_wo_bn[:-1], 'weight_decay': 4e-5},
-#                             {'params': [paras_wo_bn[-1]] + [self.head.kernel], 'weight_decay': 4e-4},
-#                             {'params': paras_only_bn}
-#                         ], lr = conf.lr, momentum = conf.momentum)
-        # self.optimizer_root = torch.optim.SGD([
-        #   {'params': self.gather_wo_decay(self.model_root)},
-        #   {'params': [*self.model_root.intermid[2].parameters()] + [self.model_root.arc_face.weight], 'weight_decay': self.weight_decay}
-        # ], lr=self.lr, momentum=self.momentum, nesterov=True)
-        # self.optimizer_consonant = torch.optim.SGD([
-        #   {'params': self.gather_wo_decay(self.model_consonant)},
-        #   {'params': [*self.model_consonant.intermid[2].parameters()] + [self.model_consonant.arc_face.weight], 'weight_decay': self.weight_decay}
-        # ], lr=self.lr, momentum=self.momentum, nesterov=True)
-        # self.optimizer_vowel = torch.optim.SGD([
-        #   {'params': self.gather_wo_decay(self.model_vowel)},
-        #   {'params': [*self.model_vowel.intermid[2].parameters()] + [self.model_vowel.arc_face.weight], 'weight_decay': self.weight_decay}
-        # ], lr=self.lr, momentum=self.momentum, nesterov=True)
-        self.optimizer_multihead = torch.optim.SGD([
-          {'params': self.gather_wo_decay_multihead(self.model_multihead)},
-          {'params': [*self.model_multihead.intermid_root[2].parameters()] + [self.model_multihead.arc_face_root.weight] +
-                 [*self.model_multihead.intermid_consonant[2].parameters()] + [self.model_multihead.arc_face_consonant.weight] + 
-                 [*self.model_multihead.intermid_vowel[2].parameters()] + [self.model_multihead.arc_face_vowel.weight] +
-                 [*self.model_multihead.intermid_unique[2].parameters()] + [self.model_multihead.arc_face_unique.weight], 'weight_decay': self.weight_decay}
-        ], lr=self.lr, momentum=self.momentum, nesterov=True)
+        self.model_multihead = MultiHeadSimpleModel(self.input_size, self.model_name, pretrained=True, dropout=self.dropout).to('cuda')
 
-        self.criterion = FocalLoss()
+
+        self.optimizer_multihead = torch.optim.SGD(self.model_multihead.parameters(), weight_decay=self.weight_decay, lr=self.lr, momentum=self.momentum, nesterov=True)
+
+        #self.criterion = FocalLoss()
     
         self.start_epoch = 0
 
         if resume:
             ckpt = torch.load(self.resume_path)
-            self.model_root.load_state_dict(ckpt['model_root_state_dict'])
-            self.model_consonant.load_state_dict(ckpt['model_consonant_state_dict'])
-            self.model_vowel.load_state_dict(ckpt['model_vowel_state_dict'])
+
             self.model_multihead.load_state_dict(ckpt['model_multihead_state_dict'])
             # self.optimizer_root.load_state_dict(ckpt['optimizer_root_state_dict'])
             # self.optimizer_consonant.load_state_dict(ckpt['optimizer_consonant_state_dict'])
@@ -305,15 +285,22 @@ class MultiHeadTrainer:
             multihead_vowel_epoch_acc_mean = 0
             multihead_unique_epoch_acc_mean = 0
 
+            multihead_root_epoch_loss_mean = 0
+            multihead_consonant_epoch_loss_mean = 0
+            multihead_vowel_epoch_loss_mean = 0
+            multihead_unique_epoch_loss_mean = 0
+
 
             root_loss_mean = 0
             consonant_loss_mean = 0
             vowel_loss_mean = 0
+            unique_loss_mean = 0
             multihead_loss_mean = 0
 
             root_acc_mean = 0
             consonant_acc_mean = 0
             vowel_acc_mean = 0
+            unique_acc_mean = 0
             multihead_root_acc_mean = 0
             multihead_consonant_acc_mean = 0
             multihead_vowel_acc_mean = 0
@@ -339,8 +326,9 @@ class MultiHeadTrainer:
               # self.scheduler_vowel.step()
               self.scheduler_multihead.step()
             batch_number = len(pbar)
+            #print(batch_number)
             for it, data in enumerate(pbar):
-                break
+                
                 inputs = data[0].to(self.device)
                 inputs = inputs.repeat(1, 3, 1, 1)
                 roots = data[1].to(self.device).long()
@@ -378,7 +366,7 @@ class MultiHeadTrainer:
                 # self.optimizer_vowel.step()
                 # self.model_vowel.zero_grad()
                 
-                root, consonant, vowel, unique = self.model_multihead(inputs, roots, consonants, vowels, uniques)
+                root, consonant, vowel, unique = self.model_multihead(inputs, uniques)
                 multihead_root_loss = (1/4)*self.criterion(root, roots)
                 #multihead_root_loss_2 = (1/4)*self.criterion(root2, roots)
                 multihead_consonant_loss = (1/4)*self.criterion(consonant, consonants)
@@ -414,6 +402,13 @@ class MultiHeadTrainer:
                 # multihead_consonant_loss.item() +
                 # multihead_vowel_loss.item() +
                 # multihead_unique_loss.item())
+
+                root_loss_mean += multihead_root_loss.item()
+                consonant_loss_mean += multihead_consonant_loss.item()
+                vowel_loss_mean += multihead_vowel_loss.item()
+                unique_loss_mean += multihead_unique_loss.item()
+
+
                 multihead_root_epoch_loss_mean += multihead_root_loss.item()
                 multihead_consonant_epoch_loss_mean += multihead_consonant_loss.item()
                 multihead_vowel_epoch_loss_mean += multihead_vowel_loss.item()
@@ -444,11 +439,11 @@ class MultiHeadTrainer:
                 multihead_unique_epoch_acc_mean += multihead_unique_acc
 
                 
-
                 if (it+1) % self.log_step == 0:
-                    # root_loss_mean /= self.log_step
-                    # consonant_loss_mean /= self.log_step
-                    # vowel_loss_mean /= self.log_step
+                    root_loss_mean /= self.log_step
+                    consonant_loss_mean /= self.log_step
+                    vowel_loss_mean /= self.log_step
+                    unique_loss_mean /= self.log_step
                     # multihead_loss_mean /= self.log_step
                     # root_acc_mean /= self.log_step
                     # consonant_acc_mean /= self.log_step
@@ -459,13 +454,10 @@ class MultiHeadTrainer:
                     multihead_unique_acc_mean /= self.log_step
                     with open(self.log_path, 'a+') as f:
                         f.write('epoch: ' + str(epoch) + '\n')
-                        # f.write('root loss: ' + str(root_loss_mean) + '\n')
-                        # f.write('consonant loss: ' + str(consonant_loss_mean) + '\n')
-                        # f.write('vowel loss: ' + str(vowel_loss_mean) + '\n')
-                        f.write('multihead loss: ' + str(multihead_loss_mean) + '\n')
-                        # f.write('root acc: ' + str(root_acc_mean) + '\n')
-                        # f.write('cosonant acc: ' + str(consonant_acc_mean) + '\n')
-                        # f.write('vowel acc: ' + str(vowel_acc_mean) + '\n')
+                        f.write('root loss: ' + str(root_loss_mean) + '\n')
+                        f.write('consonant loss: ' + str(consonant_loss_mean) + '\n')
+                        f.write('vowel loss: ' + str(vowel_loss_mean) + '\n')
+                        f.write('unique loss: ' + str(unique_loss_mean) + '\n')
                         f.write('multihead root acc: ' + str(multihead_root_acc_mean) + '\n')
                         f.write('multihead consonant acc: ' + str(multihead_consonant_acc_mean) + '\n')
                         f.write('multihead vowel acc: ' + str(multihead_vowel_acc_mean) + '\n')
@@ -474,6 +466,7 @@ class MultiHeadTrainer:
                     root_loss_mean = 0
                     consonant_loss_mean = 0
                     vowel_loss_mean = 0
+                    unique_loss_mean = 0
                     multihead_loss_mean = 0
                     root_acc_mean = 0
                     consonant_acc_mean = 0
@@ -507,15 +500,14 @@ class MultiHeadTrainer:
             root_val_loss_mean = 0
             consonant_val_loss_mean = 0
             vowel_val_loss_mean = 0
-            multihead_val_loss_mean = 0
+            unique_val_loss_mean = 0
             root_val_acc_mean = 0
             consonant_val_acc_mean = 0
             vowel_val_acc_mean = 0
             unique_val_acc_mean = 0
             unique_val_max_prob_mean = 0
-            self.model_root.eval()
-            self.model_consonant.eval()
-            self.model_vowel.eval()
+            
+            
             self.model_multihead.eval()
             with torch.no_grad():
                 for it, data in enumerate(pbar):
@@ -526,38 +518,25 @@ class MultiHeadTrainer:
                     vowels = data[3].to(self.device).long()
                     uniques = data[4].to(self.device).long()
 
-                    root_preds, root_preds_2 = self.model_root(inputs, roots)
-                    root_loss = (1/2)*self.criterion(root_preds, roots)
-                    root_loss_2 = (1/2)*self.criterion(root_preds_2, roots)
-                    self.model_root.zero_grad()
-
-                    consonant_preds, consonant_preds_2 = self.model_consonant(inputs, consonants)
-                    consonant_loss = (1/2)*self.criterion(consonant_preds, consonants)
-                    consonant_loss_2 = (1/2)*self.criterion(consonant_preds_2, consonants)
-                    self.model_consonant.zero_grad()
-
-                    vowel_preds, vowel_preds_2 = self.model_vowel(inputs, vowels)
-                    vowel_loss = (1/2)*self.criterion(vowel_preds, vowels)
-                    vowel_loss_2 = (1/2)*self.criterion(vowel_preds_2, vowels)
-                    self.model_vowel.zero_grad()
                     
-                    root, consonant, vowel, unique, root2, consonant2, vowel2, unique2 = self.model_multihead(inputs, roots, consonants, vowels, uniques)
-                    multihead_root_loss = (1/4)*self.criterion(root, roots) + (1/4)*self.criterion(root2, roots)
-                    multihead_consonant_loss = (1/4)*self.criterion(consonant, consonants) + (1/4)*self.criterion(consonant2, consonants)
-                    multihead_vowel_loss = (1/4)*self.criterion(vowel, vowels) + (1/4)*self.criterion(vowel2, vowels)
-                    multihead_unique_loss = (1/4)*self.criterion(unique, uniques) + (1/4)*self.criterion(unique2, uniques)
+                    root, consonant, vowel, unique = self.model_multihead(inputs, uniques)
+                    multihead_root_loss = (1/4)*self.criterion(root, roots)
+                    multihead_consonant_loss = (1/4)*self.criterion(consonant, consonants)
+                    multihead_vowel_loss = (1/4)*self.criterion(vowel, vowels)
+                    multihead_unique_loss = (1/4)*self.criterion(unique, uniques)
                     self.model_multihead.zero_grad()
 
                     
 
-                    root_val_loss_mean += root_loss.item() + root_loss_2.item()
-                    consonant_val_loss_mean += consonant_loss.item() + consonant_loss_2.item()
-                    vowel_val_loss_mean += vowel_loss.item() + vowel_loss_2.item()
-                    multihead_val_loss_mean += multihead_root_loss.item() + multihead_consonant_loss.item() + multihead_vowel_loss.item() + multihead_unique_loss.item()
+                    root_val_loss_mean += multihead_root_loss.item()
+                    consonant_val_loss_mean += multihead_consonant_loss.item()
+                    vowel_val_loss_mean += multihead_vowel_loss.item()
+                    unique_val_loss_mean += multihead_unique_loss.item()
+                    #multihead_val_loss_mean += multihead_root_loss.item() + multihead_consonant_loss.item() + multihead_vowel_loss.item() + multihead_unique_loss.item()
 
                     unique_val_acc_mean += (unique.argmax(-1) == uniques).sum().item() / uniques.size()[0]
                     unique_prob = F.softmax(unique, dim=1)
-                    unique_val_max_prob_mean += unique_prob.max(-1).values[0]
+                    unique_val_max_prob_mean += unique_prob.max(-1).values.mean(-1).item()
                     #print(unique_prob.sum())
                     # if unique_prob.max(-1).values[0] > 0.5:
                     #   root_acc = (root.argmax(-1) == roots).sum().item() / roots.size()[0]
@@ -567,9 +546,9 @@ class MultiHeadTrainer:
                     #   consonant_val_acc_mean += consonant_acc
                     #   vowel_val_acc_mean += vowel_acc
                     # else:
-                    root_acc = (root_preds.argmax(-1) == roots).sum().item() / roots.size()[0]
-                    consonant_acc = (consonant_preds.argmax(-1) == consonants).sum().item() / consonants.size()[0]
-                    vowel_acc = (vowel_preds.argmax(-1) == vowels).sum().item() / vowels.size()[0]
+                    root_acc = (root.argmax(-1) == roots).sum().item() / roots.size()[0]
+                    consonant_acc = (consonant.argmax(-1) == consonants).sum().item() / consonants.size()[0]
+                    vowel_acc = (vowel.argmax(-1) == vowels).sum().item() / vowels.size()[0]
                     root_val_acc_mean += root_acc
                     consonant_val_acc_mean += consonant_acc
                     vowel_val_acc_mean += vowel_acc
@@ -584,7 +563,9 @@ class MultiHeadTrainer:
             vowel_val_loss_mean /= len(pbar)
             vowel_val_acc_mean /= len(pbar)
 
-            multihead_val_loss_mean /= len(pbar)
+            #multihead_val_loss_mean /= len(pbar)
+
+            unique_val_loss_mean /= len(pbar)
             unique_val_acc_mean /= len(pbar)
             unique_val_max_prob_mean /= len(pbar)
 
@@ -598,47 +579,48 @@ class MultiHeadTrainer:
             print('vowel_loss_mean:', vowel_epoch_loss_mean, 'vowel_acc_mean:', vowel_epoch_acc_mean)
             print('vowel_val_loss_mean:', vowel_val_loss_mean, 'vowel_val_acc_mean:', vowel_val_acc_mean)
 
+            print('unique_val_loss_mean:', unique_val_loss_mean)
             print('unique_val_acc_mean:', unique_val_acc_mean)
             print('unique_val_max_prob_mean:', unique_val_max_prob_mean)
 
-            print('multihead_val_loss_mean:', multihead_val_loss_mean)
+            #print('multihead_val_loss_mean:', multihead_val_loss_mean)
             
             with open(self.log_path, 'a+') as f:
                 f.write('epoch summary\n')
                 f.write('epoch: ' + str(epoch) + '\n')
-                f.write('root loss: ' + str(root_epoch_loss_mean) + '\n')
-                f.write('root acc: ' + str(root_epoch_acc_mean) + '\n')
+                f.write('root loss: ' + str(multihead_root_epoch_loss_mean) + '\n')
+                f.write('root acc: ' + str(multihead_root_epoch_acc_mean) + '\n')
                 f.write('root_val_loss: ' + str(root_val_loss_mean) + '\n')
                 f.write('root_val_acc: ' + str(root_val_acc_mean) + '\n')
 
-                f.write('consonant_root loss: ' + str(consonant_epoch_loss_mean) + '\n')
-                f.write('consonant_root acc: ' + str(consonant_epoch_acc_mean) + '\n')
+                f.write('consonant_root loss: ' + str(multihead_consonant_epoch_loss_mean) + '\n')
+                f.write('consonant_root acc: ' + str(multihead_consonant_epoch_acc_mean) + '\n')
                 f.write('consonant_val_loss: ' + str(consonant_val_loss_mean) + '\n')
                 f.write('consonant_val_acc: ' + str(consonant_val_acc_mean) + '\n')
 
-                f.write('vowel_root loss: ' + str(vowel_epoch_loss_mean) + '\n')
-                f.write('vowel_root acc: ' + str(vowel_epoch_acc_mean) + '\n')
+                f.write('vowel_root loss: ' + str(multihead_vowel_epoch_loss_mean) + '\n')
+                f.write('vowel_root acc: ' + str(multihead_vowel_epoch_acc_mean) + '\n')
                 f.write('vowel_val_loss: ' + str(vowel_val_loss_mean) + '\n')
                 f.write('vowel_val_acc: ' + str(vowel_val_acc_mean) + '\n')
 
-                f.write('multihead loss: ' + str(multihead_epoch_loss_mean) + '\n')
-                f.write('multihead root acc: ' + str(multihead_root_epoch_acc_mean) + '\n')
-                f.write('multihead consonant acc: ' + str(multihead_consonant_epoch_acc_mean) + '\n')
-                f.write('multihead vowel acc: ' + str(multihead_vowel_epoch_acc_mean) + '\n')
+                f.write('unique loss: ' + str(multihead_unique_epoch_loss_mean) + '\n')
+                f.write('unique acc: ' + str(multihead_unique_epoch_acc_mean) + '\n')
+                f.write('unique val loss: ' + str(unique_val_loss_mean) + '\n')
+                f.write('unique val acc: ' + str(unique_val_acc_mean) + '\n')
                 f.write('\n')
             if (epoch+1) % self.save_step == 0:
                 torch.save({
-                    'model_root_state_dict': self.model_root.state_dict(),
-                    'model_consonant_state_dict': self.model_consonant.state_dict(),
-                    'model_vowel_state_dict': self.model_vowel.state_dict(),
+                    # 'model_root_state_dict': self.model_root.state_dict(),
+                    # 'model_consonant_state_dict': self.model_consonant.state_dict(),
+                    # 'model_vowel_state_dict': self.model_vowel.state_dict(),
                     'model_multihead_state_dict': self.model_multihead.state_dict(),
-                    'optimizer_root_state_dict': self.optimizer_root.state_dict(),
-                    'optimizer_consonant_state_dict': self.optimizer_consonant.state_dict(),
-                    'optimizer_vowel_state_dict': self.optimizer_vowel.state_dict(),
+                    # 'optimizer_root_state_dict': self.optimizer_root.state_dict(),
+                    # 'optimizer_consonant_state_dict': self.optimizer_consonant.state_dict(),
+                    # 'optimizer_vowel_state_dict': self.optimizer_vowel.state_dict(),
                     'optimizer_multihead_state_dict': self.optimizer_multihead.state_dict(),
                     'epoch': epoch + 1
                 }, os.path.join(self.save_dir, '%d.pth'%(epoch+1)))
         
 
-    def criterion_2(self, preds, trues):
+    def criterion(self, preds, trues):
         return torch.nn.CrossEntropyLoss()(preds, trues)
