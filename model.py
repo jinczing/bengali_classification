@@ -7,59 +7,7 @@ from torch.nn import Parameter
 from torch.autograd import Variable
 from timm.models import create_model
 
-'''
- weight_decay = 1e-4
-    x = BatchNormalization()(x)
-    x = Dropout(0.2)(x)
-    x = Flatten()(x)
-
-    # model architecture is inspired humpback comp's solution.
-    # I prepared cosface head and dense head for each outputs.
-    
-    # root
-    x1 = Dense(512, kernel_initializer='he_normal', kernel_regularizer=regularizers.l2(weight_decay))(x)
-    x1 = BatchNormalization()(x1)
-    x1 = tf.nn.l2_normalize(x1, axis=1)
-    root = CosFace(168, regularizer=regularizers.l2(weight_decay), name='root')([x1, r_label])
-    x1 = Dense(168, use_bias=False)(x1)
-    root2 = Lambda(lambda x: K.softmax(x), name='root2')(x1)
-'''
-
-class MyModel(nn.Module):
-  def __init__(self, input_size, backbone, classes_number, pretrained=True, dropout=0.2):
-    super(MyModel, self).__init__()
-    self.input_size = input_size
-    self.backbone = backbone
-    self.classes_number = classes_number
-    self.pretrained = pretrained
-    self.dropout=dropout
-
-    self.backbone = create_model(self.backbone, self.pretrained, num_classes=0)
-
-    intermid = []
-    feature_size = self.backbone.state_dict()['bn2.weight'].shape[0]
-    intermid.append(nn.BatchNorm1d(feature_size))
-    intermid.append(nn.Dropout(self.dropout))
-    intermid.append(nn.Linear(feature_size, 512))
-    intermid.append(nn.BatchNorm1d(512))
-
-    self.intermid = nn.ModuleList(intermid)
-    torch.nn.init.kaiming_normal_(self.intermid[2].weight)
-    self.arc_face = Arcface(512, self.classes_number)
-    #self.head = nn.Linear(512, self.classes_number, bias=False)
-
-
-  def forward(self, input, label):
-    x = self.backbone(input)
-    for inter in self.intermid:
-      x = inter(x)
-
-    x = F.normalize(x, p=2, dim=1)
-    output = self.arc_face(x, label)
-    #output2 = self.head(x)
-
-    return output#, output2
-
+# Mulit-headed model used in final submission
 class MultiHeadSimpleModel(nn.Module):
   
   def __init__(self, input_size, backbone, pretrained=True, dropout=0.2):
@@ -111,6 +59,38 @@ class MultiHeadSimpleModel(nn.Module):
 
     return multi_head_outputs
 
+class MyModel(nn.Module):
+  def __init__(self, input_size, backbone, classes_number, pretrained=True, dropout=0.2):
+    super(MyModel, self).__init__()
+    self.input_size = input_size
+    self.backbone = backbone
+    self.classes_number = classes_number
+    self.pretrained = pretrained
+    self.dropout=dropout
+
+    self.backbone = create_model(self.backbone, self.pretrained, num_classes=0)
+
+    intermid = []
+    feature_size = self.backbone.state_dict()['bn2.weight'].shape[0]
+    intermid.append(nn.BatchNorm1d(feature_size))
+    intermid.append(nn.Dropout(self.dropout))
+    intermid.append(nn.Linear(feature_size, 512))
+    intermid.append(nn.BatchNorm1d(512))
+
+    self.intermid = nn.ModuleList(intermid)
+    torch.nn.init.kaiming_normal_(self.intermid[2].weight)
+    self.arc_face = Arcface(512, self.classes_number)
+
+  def forward(self, input, label):
+    x = self.backbone(input)
+    for inter in self.intermid:
+      x = inter(x)
+
+    x = F.normalize(x, p=2, dim=1)
+    output = self.arc_face(x, label)
+    #output2 = self.head(x)
+
+    return output#, output2
 
 
 class MultiHeadModel(nn.Module):

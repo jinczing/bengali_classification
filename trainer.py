@@ -23,9 +23,7 @@ class BengaliDataset(Dataset):
     self.label_csv = label_csv
     self.train_folder = train_folder
     self.label = pd.read_csv(self.label_csv)
-    #self.label = label.drop(['grapheme'], axis=1, inplace=False)
     self.label[['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']] = self.label[['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']].astype('uint8')
-    #mod = pd.read_csv('./bengaliai-cv19/train_multi_diacritics.csv')
     self.degree = degree
 
     self.transforms = transforms
@@ -44,7 +42,6 @@ class BengaliDataset(Dataset):
     img = self.img[idx]
     if img is None:
       name = self.label.loc[idx]['image_id']
-      #img = cv2.imread(os.path.join(self.train_folder, name+'.jpg'), cv2.IMREAD_GRAYSCALE)
       img = Image.open(os.path.join(self.train_folder, name+'.jpg'))
       return self.transforms(img)
     else:
@@ -60,46 +57,6 @@ class BengaliDataset(Dataset):
 
   def __len__(self):
     return self.label.shape[0]
-
-# Borrow from Improved Regularization of Convolutional Neural Networks with Cutout (https://github.com/uoguelph-mlrg/Cutout)
-class Cutout(object):
-    """Randomly mask out one or more patches from an image.
-    Args:
-        n_holes (int): Number of patches to cut out of each image.
-        length (int): The length (in pixels) of each square patch.
-    """
-    def __init__(self, n_holes, length):
-        self.n_holes = n_holes
-        self.length = length
-
-    def __call__(self, img):
-        """
-        Args:
-            img (Tensor): Tensor image of size (C, H, W).
-        Returns:
-            Tensor: Image with n_holes of dimension length x length cut out of it.
-        """
-        h = img.size(1)
-        w = img.size(2)
-
-        mask = np.ones((h, w), np.float32)
-
-        for n in range(self.n_holes):
-            y = np.random.randint(h)
-            x = np.random.randint(w)
-
-            y1 = np.clip(y - self.length // 2, 0, h)
-            y2 = np.clip(y + self.length // 2, 0, h)
-            x1 = np.clip(x - self.length // 2, 0, w)
-            x2 = np.clip(x + self.length // 2, 0, w)
-
-            mask[y1: y2, x1: x2] = 0.
-
-        mask = torch.from_numpy(mask)
-        mask = mask.expand_as(img)
-        img = img * mask
-
-        return img
 
 
 class Trainer:
@@ -150,12 +107,8 @@ class Trainer:
         
         # Compose transforms
         transform = []
-        val_transform = []
 
-        #transform += [transforms.ToPILImage()]
         transform += [transforms.Resize(self.input_size)]
-        #transform += [transforms.RandomRotation(self.degree)]
-        #transform += [transforms.ToTensor()]
 
         self.transform = transforms.Compose(transform)
         self.val_transform = transforms.Compose(val_transform)
@@ -168,15 +121,13 @@ class Trainer:
         self.model_root = create_model(model_name, pretrained=True, num_classes=168).to(self.device)
         self.model_consonant = create_model(model_name, pretrained=True, num_classes=8).to(self.device)
         self.model_vowel = create_model(model_name, pretrained=True, num_classes=11).to(self.device)
-        #self.model_root = MyModel(self.input_size, backbone=model_name, classes_number=168, pretrained=True, dropout=0).to(self.device)
-        #self.model_consonant = MyModel(self.input_size, backbone=model_name, classes_number=8, pretrained=True, dropout=0).to(self.device)
-        #self.model_vowel = MyModel(self.input_size, backbone=model_name, classes_number=11, pretrained=True, dropout=0).to(self.device)
         self.optimizer_root = torch.optim.SGD(self.model_root.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay, nesterov=True)
         self.optimizer_consonant = torch.optim.SGD(self.model_consonant.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay, nesterov=True)
         self.optimizer_vowel = torch.optim.SGD(self.model_vowel.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay, nesterov=True)
     
         self.start_epoch = 0
 
+        # To use focal loss, uncomment this and change the name of self.criterion function
         #self.criterion = FocalLoss()
 
         if resume:
